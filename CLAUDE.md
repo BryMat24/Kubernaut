@@ -138,11 +138,10 @@ agent_service/
 ├── graph/
 │   ├── state.py               # IncidentState
 │   ├── build_graph.py         # StateGraph wiring, conditional edges
-│   ├── nodes/                 # triage.py, diagnosis.py, verify.py, comms.py, escalate.py
-│   └── subgraphs/             # runtime_fix.py, gitops_fix.py — shared, approval-gated
+│   └── nodes/                 # triage.py, diagnosis.py, etc
 ├── chat_agent/                # agent.py (ReAct loop), tools.py, prompts.py
-├── mcp_clients/                # tools_read_client.py, tools_write_client.py, git_tools_client.py
-└── integrations/               # slack.py, alertmanager.py
+py
+├── mcp_clients/                # tools_read_client.py, tools_write_client.py, git_tools_client.
 ```
 
 ## Guardrails to preserve when adding tools or nodes
