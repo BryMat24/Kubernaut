@@ -1,136 +1,133 @@
 # Kubernaut
 
-_An AI agent that triages Kubernetes incidents, diagnoses root cause, and
-fixes them — escalating to a pull request instead of a live patch when the
-fix actually belongs in git._
+**Kubernaut diagnoses issues in a Kubernetes cluster and safely proposes fixes through GitOps — it never applies changes directly to the cluster.**
 
-> Working title — swap freely if you land on something better.
+A multi-agent system that combines live cluster diagnosis (Kubernetes, Prometheus, Loki) with a bounded, human-approved remediation path (GitHub PR → ArgoCD sync).
 
-## Demo
-
-_[Video/GIF here: an alert fires, the agent triages and diagnoses it, posts
-a proposed fix to Slack, a human approves, the fix is applied (or a PR is
-opened), and the agent confirms resolution.]_
-
-## Why this exists
-
-Two open-source projects inspired this: **kagent** gives you chat-driven,
-natural-language Kubernetes operations. **AtlasOps**-style pipelines give you
-autonomous, alert-driven incident response. Most tools do one or the other.
-This project combines both into one system: a single LangGraph service that
-answers operator questions in chat _and_ reacts to Prometheus alerts on its
-own — sharing the same tools, the same approval mechanism, and, where it
-matters, the same remediation logic.
-
-The one architectural idea worth understanding before anything else: **the
-alert path and the chat path use different control-flow styles on purpose.**
+---
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    slack[Slack alert] -->|webhook| triage[Triage]
-    chat[Web chat UI] -->|LLM tool selection| chatAgent[Chat agent]
+    Actor([Actor]) --> IC[Intent Classifier Agent]
+    IC --> DA[Diagnosis Agent]
+    IC --> IA[Inspector Agent]
 
-    triage --> diagnosis[Diagnosis]
-    diagnosis --> rootcause{root_cause_type}
+    DA --> CR
 
-    rootcause -->|transient| runtimeFix
-    rootcause -->|config_drift| gitopsFix
+    subgraph RP["Remediation Pipeline"]
+        CR[Clone Repo] --> PA[Planner Agent]
+        PA --> CA[Coding Agent]
+        CA --> EV[Evaluate]
+        EV -.->|Max 3 retries| CA
+    end
 
-    chatAgent -->|propose_runtime_fix tool| runtimeFix[Runtime fix<br/>shared subgraph]
-    chatAgent -->|propose_gitops_fix tool| gitopsFix[GitOps fix<br/>shared subgraph]
-    chatAgent -->|read-only question| chatReply[Reply in chat]
+    CA -->|create pr| GH[GitHub]
 
-    runtimeFix --> approval1{interrupt: approved?}
-    approval1 -->|approved| execRuntime[Execute via tools-write]
-    approval1 -->|denied| comms
+    Argo[ArgoCD] -->|poll| GH
+    Argo <-->|sync| K8s[("Kubernetes<br/>Cluster")]
 
-    execRuntime --> verify{Verify fix}
-    verify -->|resolved| comms[Comms]
-    verify -->|not resolved, retries left| diagnosis
-    verify -->|retries exhausted| escalate[Escalate: needs human]
+    classDef agent fill:#2a2a2a,stroke:#ffffff,color:#ffffff
+    classDef tool fill:#1a1a1a,stroke:#ff8c42,color:#ffffff
+    classDef ext fill:#ffffff,stroke:#000000,color:#000000
 
-    gitopsFix --> approval2{interrupt: approved?}
-    approval2 -->|approved| execGitops[Open PR via git-tools]
-    approval2 -->|denied| comms
-
-    execGitops --> comms
-    escalate --> comms
-    comms --> delivered[Delivered to origin]
+    class IC,DA,IA,CR,PA,CA,EV agent
+    class ToolsL,ToolsR tool
+    class GH,Argo,K8s ext
 ```
 
-**The alert path (left) is a linear workflow.** Triage → Diagnosis → a
-deterministic conditional edge on `root_cause_type` → Runtime fix or GitOps
-fix → Verify → Comms. Every transition is a plain function reading a state
-field. No LLM ever decides what node runs next here — that's deliberate,
-because it means the approval gate is structurally unavoidable, not just
-prompted for.
+---
 
-**The chat path (right) is an agentic loop.** An LLM genuinely decides which
-tool to call next, because an operator's question is open-ended in a way a
-fixed graph can't anticipate. But its discretion stops at _deciding intent_ —
-once it calls `propose_runtime_fix` or `propose_gitops_fix`, control hands
-off into the exact same approval-gated, deterministic subgraph the alert path
-uses. The chat agent never executes a privileged action itself.
+## How a request flows through the system
 
-**Verify + retry.** After a runtime fix executes, the graph re-checks the
-original signal. If it's resolved, done. If not, it loops back to Diagnosis
-(bounded by a retry limit) rather than declaring success unconditionally. If
-retries run out, it escalates to a human instead of finishing silently.
+1. **Entry point** — a chat message (`Actor`) or an Alertmanager webhook hits the **Intent Classifier**, which routes to either a fast read-only path or the diagnosis path.
+2. **Inspector Agent** — handles simple factual lookups ("what namespace is pod X in") with a single tool call. No investigation, no state created.
+3. **Diagnosis Agent** — investigates real problems using read-only tools (Kubernetes API, Prometheus, Loki). Produces a structured `next_action` recommendation, not a natural-language essay.
+4. **Remediation Pipeline** — only runs if Diagnosis proposes a fix:
+    - **Planner Agent** validates the proposed change against a **service registry** — a static, human-authored file mapping each service to its GitOps file path and the specific fields an agent is allowed to touch. If the proposed field isn't in the registry, the pipeline stops and escalates instead of guessing.
+    - **Coding Agent** computes an in-memory, structured patch (exact field replacement, not free-form regeneration) and opens a PR via the GitHub API.
+    - **Evaluate** runs lint/dry-run checks before the PR is finalized, with up to 3 retries on failure.
+5. **GitOps sync** — ArgoCD polls GitHub, and only applies the change once a human has reviewed and merged the PR. `selfHeal` is enabled, so any out-of-band drift reverts automatically — git is the only path to a durable change.
+
+---
 
 ## Key design decisions
 
-- **Human-in-the-loop on every write.** No action touches the cluster or git
-  without an explicit approval step.
-- **GitOps-aware remediation.** Configuration-caused problems are fixed via a
-  pull request, never a direct patch, since a direct patch would just get
-  reverted by Argo CD reconciliation.
-- **RBAC as a hard boundary, not a prompt instruction.** Read and write
-  actions run under separate, narrowly-scoped ServiceAccounts. The GitOps fix
-  path has no Kubernetes RBAC at all — it only touches git.
-- **Deterministic where possible, agentic where necessary.** Control flow is
-  only handed to an LLM where the next step genuinely can't be known in
-  advance (chat tool selection). Everywhere a privileged action executes, the
-  path is fixed and auditable.
-- **Alerts trigger runs; logs are queried on demand.** No log-streaming
-  platform in the trigger path — Prometheus/Alertmanager fire structured
-  alerts, and logs are pulled from Loki only once a run has started.
+These are the calls this project makes on purpose, and the reasoning behind each one:
+
+| Decision                                                         | Why                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No direct `kubectl apply` remediation path**                   | Fights ArgoCD's own self-heal, and removes the audit trail / approval gate that's the actual point of the project. Every write goes through a PR.                                                                                                                            |
+| **Remediation is scoped to `values.yaml` fields only**           | Editing a typed scalar can't produce invalid YAML or an unreviewable diff. Editing Helm templates or arbitrary code is a structural change with much higher blast radius — intentionally out of scope.                                                                       |
+| **A static service registry, not repo search or a vector index** | The set of agent-manageable fields is small and known ahead of time. A registry lookup is deterministic, auditable, and doubles as a whitelist — there's nothing to search because nothing should be discoverable at runtime.                                                |
+| **No vector database**                                           | Diagnosis and remediation both operate on live, current state — nothing here benefits from semantic retrieval over a stale corpus. (kagent itself reuses its existing Postgres instance rather than deploying separate vector infrastructure — same reasoning applies here.) |
+
+---
+
+## Agents
+
+| Agent                 | Access                              | Responsibility                                                            |
+| --------------------- | ----------------------------------- | ------------------------------------------------------------------------- |
+| **Intent Classifier** | none                                | Routes a request to Inspector, Diagnosis, or (if alert-originated) Triage |
+| **Inspector**         | read-only                           | Single-tool-call factual lookups                                          |
+| **Diagnosis**         | read-only (K8s, Prometheus, Loki)   | Root-cause investigation, produces `next_action`                          |
+| **Planner**           | read-only (registry, repo contents) | Validates `next_action` against the registry, builds a structured plan    |
+| **Coding Agent**      | write (scoped to registry fields)   | Computes the patch, opens the PR                                          |
+| **(escalation path)** | issue creation only                 | Files a GitHub issue when a fix falls outside the registry                |
+
+---
+
+## Tech stack
+
+- **Cluster**: Kubernetes (kind for local dev)
+- **GitOps**: ArgoCD (`selfHeal: true`, `prune: true`), Helm
+- **Agent runtime**: Python/Go, MCP for tool integration, any LLM API
+- **Observability**: Prometheus, Loki, OpenTelemetry
+- **Git integration**: GitHub REST API (Contents, Refs, Pulls) — no local clone
+- **State**: a lightweight `Incident` CRD tracking phase (`Diagnosing → Planning → AwaitingPR → Resolved`), reconciled by a small controller
+
+---
+
+## Repo structure
+
+```
+Kubernaut/
+├── agent-engine/          # Intent Classifier, Inspector, Diagnosis, Planner, Coding Agent
+├── incident-controller/   # Small Go controller reconciling the Incident CRD
+├── mcp-tool-servers/      # Kubernetes, Prometheus, Loki MCP servers
+├── agent-platform-chart/  # Helm chart: one-time cluster install (CRD, controller, RBAC)
+├── agent-gitops-repo/     # Watched by ArgoCD; values.yaml + service-registry.yaml
+└── demo/                  # Seed scripts to simulate incidents end-to-end
+```
+
+---
+
+## Demo scenarios
+
+1. **Traffic spike → scale replicas** — clean end-to-end declarative path, PR, ArgoCD sync.
+2. **Bad deploy → rollback image tag** — Diagnosis correlates a metric spike with a recent commit.
+3. **OOMKilled → bump memory limit** — exercises a different registry field.
+4. **Downstream dependency failure → diagnosis-only** — demonstrates the agent correctly declining to remediate and explaining why.
+5. **Out-of-registry problem → GitHub issue filed** — demonstrates the escalation path instead of a forced/unsafe fix.
+
+Run `demo/simulate.sh <scenario>` to trigger any of the above without needing a live incident.
+
+---
 
 ## Getting started
 
 ```bash
-# 1. Local cluster
-kind create cluster --name kubernaut-dev
+# 1. Spin up a local cluster
+kind create cluster --name Kubernaut
 
-# 2. Deploy the platform (tool servers, postgres, RBAC)
-helm install kubernaut ./charts/agent-platform -n agent-platform --create-namespace
+# 2. Install ArgoCD and the agent platform
+helm install argocd argo/argo-cd -n argocd --create-namespace
+helm install Kubernaut-platform ./agent-platform-chart -n Kubernaut --create-namespace
 
-# 3. Send a test alert to trigger the incident path
-./scripts/send_test_alert.sh
+# 3. Point ArgoCD at the GitOps repo
+kubectl apply -f agent-gitops-repo/application.yaml
 
-# 4. Or talk to it directly
-curl -X POST http://localhost:8000/chat -d '{"message": "what pods are crashing in default?"}'
+# 4. Run a simulated incident
+./demo/simulate.sh traffic-spike
 ```
-
-See `CLAUDE.md` for the full internal architecture, state schema, and
-conventions if you're extending this codebase.
-
-## Tech stack
-
-LangGraph · MCP (Model Context Protocol) · FastAPI · Kubernetes Python client
-· Slack Bolt · Prometheus + Alertmanager · Loki + Vector · Helm · Argo CD ·
-Postgres
-
-## Roadmap / explicitly out of scope
-
-Not built, and deliberately so — to keep this project scoped to something
-completable and defensible rather than sprawling:
-
-- Fine-tuning or self-hosted model serving (vLLM/GPU) — uses hosted LLM APIs
-- Kafka/event-streaming log ingestion — alerts trigger runs, not raw log volume
-- Service mesh (Istio), policy engines (Kyverno) — out of scope for the agent's job
-- Post-merge verification for GitOps fixes (the PR is validated pre-merge;
-  confirming the deploy actually resolved the issue is a natural v2 feature)
-- Splitting workers into separate deployed services / true A2A — the current
-  monolith-with-multi-agent-structure is a deliberate simplicity tradeoff
