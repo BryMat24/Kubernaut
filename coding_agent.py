@@ -51,7 +51,10 @@ class CodingAgent:
             touching anything — do not guess a path. This will help narrow the file path
             2. Use `list_files_in_directory` to list files in directory
             3. Use `read_file_content` to see the current, exact content of a file before
-            editing it. Never edit a file you haven't just read.
+            editing it. Never edit a file you haven't just read. This is also how you check
+            whether the task is already done: if the value already matches what the task asks
+            for, stop immediately — do not call `edit_file`, do not keep searching other files
+            — and reply with a summary saying no change was needed.
             4. Use `edit_file` for changes to existing files. `old_content` must be copied
             verbatim (exact whitespace/indentation) from what you just read, and must be
             unique in the file — include enough surrounding context to make it so.
@@ -65,6 +68,8 @@ class CodingAgent:
             - Fix only what the task describes. Do not refactor, reformat, or touch unrelated
             fields, files, or apps.
             - Preserve existing YAML structure, key ordering, and indentation style exactly.
+            - If a manifest already reflects the desired end state, leave it unchanged and stop
+            — do not edit it just to confirm, and do not keep looking for another file to change.
 
             When you are confident the fix has been applied correctly, stop calling tools and
             reply with a brief summary of what you changed and why — that ends the task.
@@ -90,7 +95,7 @@ class CodingAgent:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\nOutstanding tasks:\n{state["task"]}"
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\task:\n{state['task']}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
@@ -182,7 +187,7 @@ if __name__ == "__main__":
     coding_agent = CodingAgent(model, tools)
 
     task = (
-        "change the api container port to 6000"
+        "change the worker api replica count to 3"
     )
     initial_state: CodingAgentState = {
         "messages": [HumanMessage(content=task)],
