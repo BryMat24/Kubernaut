@@ -23,7 +23,7 @@ GITOPS_REPO_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "Kubernaut-Gitops")
 )
 class CodingAgentState(MessagesState):
-    tasks_list: list[str]
+    task: str
     iteration_count: int
     eval_passed: bool
 
@@ -34,7 +34,7 @@ class CodingAgent:
         self.graph = self._build_graph()
         self.llm_as_judge = DiffEvaluator(llm)
         self.logger = logging.getLogger("coding_agent")
-        self.MAX_ITERATIONS = 10
+        self.MAX_ITERATIONS = 20
         self.SYSTEM_PROMPT = f"""
             You are a GitOps repair agent. Your job is to find and fix the
             Kubernetes manifest responsible for a reported problem in the GitOps repo below,
@@ -42,6 +42,9 @@ class CodingAgent:
 
             Repo working directory (always pass this exact string as `working_directory` to
             every tool call): {GITOPS_REPO_PATH}
+
+            Available tools — this is the complete list, there is no shell, git, or terminal
+            access, and no other tool exists: {", ".join(t.name for t in tools)}.
 
             Workflow:
             1. Use `find` and `grep` to locate the manifest(s) relevant to the task before
@@ -73,29 +76,21 @@ class CodingAgent:
         graph = StateGraph(state_schema=CodingAgentState)
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
-        graph.add_node("evaluation_node", self._evaluation_node)
 
         graph.add_edge(START, "reasoning_node")
         graph.add_conditional_edges(
             "reasoning_node",
             self._tool_routing,
-            {"tool_node": "tool_node", "evaluation_node": "evaluation_node", "end": END},
+            {"tool_node": "tool_node", "end": END},
         )
         graph.add_edge("tool_node", "reasoning_node")
-        graph.add_conditional_edges(
-            "evaluation_node",
-            self._evaluation_routing,
-            {"reasoning_node": "reasoning_node", "end": END}
-        )
         return graph.compile()
 
     def _reasoning_node(self, state: CodingAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
-        tasks_list = state.get("tasks_list", [])
-        tasks_block = "\n".join(f"- {t}" for t in tasks_list) or "(none)"
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\nOutstanding tasks:\n{tasks_block}"
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\nOutstanding tasks:\n{state["task"]}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
@@ -122,51 +117,50 @@ class CodingAgent:
         last_message = state["messages"][-1]
         if getattr(last_message, "tool_calls", None):
             return "tool_node"
-        return "evaluation_node"
+        return "end"
     
-    def _evaluation_node(self, state: CodingAgentState) -> dict[str, Any]:
-        files = get_changed_files(GITOPS_REPO_PATH)
+    # def _evaluation_node(self, state: CodingAgentState) -> dict[str, Any]:
+    #     files = get_changed_files(GITOPS_REPO_PATH)
 
-        if not files:
-            return { "eval_passed": True }
+    #     if not files:
+    #         return { "eval_passed": True }
 
-        # check yaml structure valid or not
-        errorList = []
-        structureValid = True
+    #     # check yaml structure valid or not
+    #     errorList = []
+    #     structureValid = True
 
-        for file_path in files:
-            passed, err = self._validate_yaml_syntax(os.path.join(GITOPS_REPO_PATH, file_path))
-            if not passed:
-                errorList.append(err)
-                structureValid = False
+    #     for file_path in files:
+    #         passed, err = self._validate_yaml_syntax(os.path.join(GITOPS_REPO_PATH, file_path))
+    #         if not passed:
+    #             errorList.append(err)
+    #             structureValid = False
 
-        if not structureValid:
-            return {
-                "eval_passed": False,
-                "messages": [AIMessage(content=f"Review feedback: Error in parsing yaml syntax\nIssues: {json.dumps(errorList)}\nPlease fix.")]
-            }
+    #     if not structureValid:
+    #         return {
+    #             "eval_passed": False,
+    #             "messages": [AIMessage(content=f"Review feedback: Error in parsing yaml syntax\nIssues: {json.dumps(errorList)}\nPlease fix.")]
+    #         }
 
-        diff = get_diff_content(GITOPS_REPO_PATH)
-        task = state["messages"][0].content
-        result = self.llm_as_judge.evaluate(task, diff)
+    #     diff = get_diff_content(GITOPS_REPO_PATH)
+    #     result = self.llm_as_judge.evaluate(state["task"], diff)
 
-        if not result.correct:
-            return {"eval_passed": False, "messages": [AIMessage(content=f"Review feedback: {result.reasoning}\nIssues: {result.issues}\nPlease fix.")] }
+    #     if not result.correct:
+    #         return {"eval_passed": False, "messages": [AIMessage(content=f"Review feedback: {result.reasoning}\nIssues: {result.issues}\nPlease fix.")] }
         
-        return {"eval_passed": True, "messages": [AIMessage(content="All evaluation has passed, proceeding to open PR")] }
+    #     return {"eval_passed": True, "messages": [AIMessage(content="All evaluation has passed, proceeding to open PR")] }
 
-    def _validate_yaml_syntax(self, file_path: str) -> tuple[bool, str | None]:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                yaml.safe_load(file)
-            return True, None
-        except Exception as e:
-            return False, f"Error in parsing yaml of file: {file_path}, error: {e}"
+    # def _validate_yaml_syntax(self, file_path: str) -> tuple[bool, str | None]:
+    #     try:
+    #         with open(file_path, 'r', encoding='utf-8') as file:
+    #             yaml.safe_load(file)
+    #         return True, None
+    #     except Exception as e:
+    #         return False, f"Error in parsing yaml of file: {file_path}, error: {e}"
     
-    def _evaluation_routing(self, state: CodingAgentState) -> Literal["reasoning_node", "end"]:
-        if state["eval_passed"]:
-            return "end"
-        return "reasoning_node"
+    # def _evaluation_routing(self, state: CodingAgentState) -> Literal["reasoning_node", "end"]:
+    #     if state["eval_passed"]:
+    #         return "end"
+    #     return "reasoning_node"
 
     @staticmethod
     def _preview(text: Any, limit: int = 300) -> str:
@@ -188,11 +182,11 @@ if __name__ == "__main__":
     coding_agent = CodingAgent(model, tools)
 
     task = (
-        "change the backend pod port to 6000 from 5678"
+        "change the api container port to 6000"
     )
     initial_state: CodingAgentState = {
         "messages": [HumanMessage(content=task)],
         "iteration_count": 0,
-        "tasks_list": [task]
+        "task": task
     }
-    coding_agent._evaluation_node(initial_state)
+    result = coding_agent.invoke(initial_state)
