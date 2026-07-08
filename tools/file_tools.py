@@ -210,7 +210,7 @@ def edit_file(working_directory, file_path, old_content, new_content):
 @tool
 def write_file(working_directory, file_path, content):
     """
-    Create a new file or overwrite an existing one entirely.
+    Create a new file or overwrite an existing one entirely. Use this to create new manifests.
 
     Args:
         working_directory (str): The absolute path to the base directory.

@@ -34,7 +34,7 @@ class CodingAgent:
         self.graph = self._build_graph()
         self.llm_as_judge = DiffEvaluator(llm_judge)
         self.logger = logging.getLogger("coding_agent")
-        self.MAX_ITERATIONS = 20
+        self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""
             You are a GitOps repair agent. Your job is to find and fix the
             Kubernetes manifest responsible for a reported problem in the GitOps repo below,
@@ -47,6 +47,8 @@ class CodingAgent:
             access, and no other tool exists: {", ".join(t.name for t in tools)}.
 
             Workflow:
+            0. use read_file_content on AGENT.md file which gives information regarding repository
+            and overall architecture
             1. Use `find` and `grep` to locate the manifest(s) relevant to the task before
             touching anything — do not guess a path. This will help narrow the file path
             2. Use `list_files_in_directory` to list files in directory
@@ -205,7 +207,7 @@ if __name__ == "__main__":
     tools = [list_files_in_directory, read_file_content, grep, find, edit_file, write_file]
 
     judge_model = ChatOpenRouter(
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.3-codex",
         temperature=0.1,
         api_key=os.getenv("OPENROUTER_API_KEY")
     )
@@ -213,7 +215,7 @@ if __name__ == "__main__":
     coding_agent = CodingAgent(model, tools, judge_model)
 
     task = (
-        "change the namespace deployment of the worker to default from demo"
+        "change a new configmap that stores container name and image of the 'api' deployment. Make sure that the newly added is configmap file is being referenced as well"
     )
     initial_state: CodingAgentState = {
         "messages": [HumanMessage(content=task)],
