@@ -25,5 +25,5 @@ class DiffEvaluator:
         Respond with structured output: correct (bool), reasoning (str), issues (list[str]).
         """
 
-        result = self.llm.invoke(eval_prompt)
-        return result
+        response = self.llm.invoke(eval_prompt)
+        return response
