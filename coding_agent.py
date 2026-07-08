@@ -195,5 +195,4 @@ if __name__ == "__main__":
         "iteration_count": 0,
         "tasks_list": [task]
     }
-    result = coding_agent.invoke(initial_state)
-    print(result["messages"][-1].content)
+    coding_agent._evaluation_node(initial_state)
