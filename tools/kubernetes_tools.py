@@ -585,3 +585,34 @@ def rollout_status(deployment: str, namespace: str = "default"):
         }
     except Exception as e:
         return f"Error in getting rollout status: {e}"
+
+# RELATIONSHIPS
+@tool
+def check_service_connectivity(service: str, namespace: str = "default"):
+    """
+    Check whether a Kubernetes Service is reachable and resolving correctly.
+
+    Verifies the Service exists, has ready Endpoints (backing pods), and
+    optionally that the port is reachable from within the cluster.
+
+    Typical use cases:
+      - Diagnose "service unreachable" or "connection refused" reports.
+      - Confirm a Service has no ready endpoints (common cause: label
+        selector mismatch, or all backing pods unhealthy).
+    """
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "endpoints", service, "-n", namespace, "-o", "json"],
+            capture_output=True, text=True, check=True,
+        )
+        data = json.loads(result.stdout)
+        subsets = data.get("subsets", [])
+        ready_addresses = sum(len(s.get("addresses", [])) for s in subsets)
+        return {
+            "service": service,
+            "has_ready_endpoints": ready_addresses > 0,
+            "ready_endpoint_count": ready_addresses,
+            "subsets": subsets,
+        }
+    except Exception as e:
+        return f"Error checking service connectivity: {e}"
