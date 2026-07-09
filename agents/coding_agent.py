@@ -8,11 +8,12 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from typing import Any, Literal
-from utils import get_diff_content, get_changed_files
+from utils import get_diff_content, get_changed_files, open_pull_request, slugify
 from evaluator import DiffEvaluator
 import logging
 import yaml
 import json
+import uuid
 
 import os
 
@@ -20,12 +21,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 GITOPS_REPO_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "Kubernaut-Gitops")
+    os.path.join(os.path.dirname(__file__), "../Kubernaut-Gitops") # this is dummy
 )
 class CodingAgentState(MessagesState):
     task: str
     iteration_count: int
     eval_passed: bool
+    eval_reasoning: str
+    pr_url: str
 
 class CodingAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool], llm_judge: BaseChatModel) -> None:
@@ -87,6 +90,7 @@ class CodingAgent:
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
         graph.add_node("evaluation_node", self._evaluation_node)
+        graph.add_node("pr_node", self._pr_node)
 
         graph.add_edge(START, "reasoning_node")
         graph.add_conditional_edges(
@@ -98,8 +102,9 @@ class CodingAgent:
         graph.add_conditional_edges(
             "evaluation_node",
             self._evaluation_routing,
-            {"reasoning_node": "reasoning_node", "end": END},
+            {"reasoning_node": "reasoning_node", "pr_node": "pr_node"},
         )
+        graph.add_edge("pr_node", END)
         return graph.compile()
 
     def _reasoning_node(self, state: CodingAgentState) -> dict[str, Any]:
@@ -172,7 +177,11 @@ class CodingAgent:
             return {"eval_passed": False, "messages": [AIMessage(content=f"Review feedback: {result.reasoning}\nIssues: {result.issues}\nPlease fix.")] }
 
         self.logger.info("  eval_passed=True")
-        return {"eval_passed": True, "messages": [AIMessage(content="All evaluation has passed, proceeding to open PR")] }
+        return {
+            "eval_passed": True,
+            "eval_reasoning": result.reasoning,
+            "messages": [AIMessage(content="All evaluation has passed, proceeding to open PR")],
+        }
 
     def _validate_yaml_syntax(self, file_path: str) -> tuple[bool, str | None]:
         try:
@@ -182,12 +191,35 @@ class CodingAgent:
         except Exception as e:
             return False, f"Error in parsing yaml of file: {file_path}, error: {e}"
     
-    def _evaluation_routing(self, state: CodingAgentState) -> Literal["reasoning_node", "end"]:
+    def _evaluation_routing(self, state: CodingAgentState) -> Literal["reasoning_node", "pr_node"]:
         if state["eval_passed"]:
-            self.logger.info("  routing: evaluation_node -> end")
-            return "end"
+            self.logger.info("  routing: evaluation_node -> pr_node")
+            return "pr_node"
         self.logger.info("  routing: evaluation_node -> reasoning_node")
         return "reasoning_node"
+
+    def _pr_node(self, state: CodingAgentState) -> dict[str, Any]:
+        self.logger.info("\n=== opening PR ===")
+        files = get_changed_files(GITOPS_REPO_PATH)
+        branch = f"kubernaut/{slugify(state['task'])}-{uuid.uuid4().hex[:6]}"
+        try:
+            pr_url = open_pull_request(
+                GITOPS_REPO_PATH,
+                branch,
+                commit_message=f"fix: {state['task']}",
+                title=state["task"][:72],
+                body=self._build_pr_body(files, state.get("eval_reasoning", "")),
+            )
+            self.logger.info(f"  opened PR: {pr_url}")
+            return {"pr_url": pr_url, "messages": [AIMessage(content=f"Opened PR: {pr_url}")]}
+        except Exception as e:
+            self.logger.info(f"  failed to open PR: {e}")
+            return {"messages": [AIMessage(content=f"Failed to open PR: {e}")]}
+
+    @staticmethod
+    def _build_pr_body(files: list[str], reasoning: str) -> str:
+        file_list = "\n".join(f"- {f}" for f in files) or "(no files changed)"
+        return f"## Changed files\n{file_list}\n\n## Judge reasoning\n{reasoning}"
 
     @staticmethod
     def _preview(text: Any, limit: int = 300) -> str:
@@ -198,28 +230,28 @@ class CodingAgent:
         return self.graph.invoke(initial_state)
 
 
-if __name__ == "__main__":
-    model = ChatOpenRouter(
-        model="qwen/qwen3-coder-next",
-        temperature=0.1,
-        api_key=os.getenv("OPENROUTER_API_KEY")
-    )
-    tools = [list_files_in_directory, read_file_content, grep, find, edit_file, write_file]
+# if __name__ == "__main__":
+#     model = ChatOpenRouter(
+#         model="qwen/qwen3-coder-next",
+#         temperature=0.1,
+#         api_key=os.getenv("OPENROUTER_API_KEY")
+#     )
+#     tools = [list_files_in_directory, read_file_content, grep, find, edit_file, write_file]
 
-    judge_model = ChatOpenRouter(
-        model="openai/gpt-5.3-codex",
-        temperature=0.1,
-        api_key=os.getenv("OPENROUTER_API_KEY")
-    )
+#     judge_model = ChatOpenRouter(
+#         model="openai/gpt-5.3-codex",
+#         temperature=0.1,
+#         api_key=os.getenv("OPENROUTER_API_KEY")
+#     )
 
-    coding_agent = CodingAgent(model, tools, judge_model)
+#     coding_agent = CodingAgent(model, tools, judge_model)
 
-    task = (
-        "change a new configmap that stores container name and image of the 'api' deployment. Make sure that the newly added is configmap file is being referenced as well"
-    )
-    initial_state: CodingAgentState = {
-        "messages": [HumanMessage(content=task)],
-        "iteration_count": 0,
-        "task": task
-    }
-    result = coding_agent.invoke(initial_state)
+#     task = (
+#         "change the namespace of the 'worker' deployment to 'test' instead of 'demo'"
+#     )
+#     initial_state: CodingAgentState = {
+#         "messages": [HumanMessage(content=task)],
+#         "iteration_count": 0,
+#         "task": task
+#     }
+#     result = coding_agent.invoke(initial_state)
