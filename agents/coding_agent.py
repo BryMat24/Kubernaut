@@ -1,8 +1,5 @@
-from dotenv import load_dotenv
-from tools import list_files_in_directory, read_file_content, grep, find, edit_file, write_file
-from langchain_openrouter import ChatOpenRouter
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, AIMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.graph.state import CompiledStateGraph
@@ -26,7 +23,6 @@ import uuid
 
 import os
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 class CodingAgentState(MessagesState):

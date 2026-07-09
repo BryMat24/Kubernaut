@@ -44,10 +44,10 @@ flowchart TB
         PR["Open / Update PR"]
     end
 
-    subgraph MCP["MCP Tool Layer"]
-        K8sMCP["Kubernetes MCP<br/>(read verbs + logs)"]
-        PromMCP["Prometheus MCP<br/>(metrics)"]
-        GHMCP["GitHub MCP<br/>(no cluster creds)"]
+    subgraph MCP["Tool Layer"]
+        K8sMCP["Kubernetes<br/>(read verbs + logs)"]
+        PromMCP["Prometheus<br/>(metrics)"]
+        GHMCP["GitHub<br/>(no cluster creds)"]
     end
 
     subgraph State["State & Observability"]
