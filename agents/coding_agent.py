@@ -8,7 +8,16 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from typing import Any, Literal
-from utils import get_diff_content, get_changed_files, open_pull_request, slugify
+from utils import (
+    get_diff_content,
+    get_changed_files,
+    open_pull_request,
+    slugify,
+    ensure_base_clone,
+    create_task_worktree,
+    remove_task_worktree,
+    repo_lock,
+)
 from evaluator import DiffEvaluator
 import logging
 import yaml
@@ -20,15 +29,17 @@ import os
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-GITOPS_REPO_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../Kubernaut-Gitops") # this is dummy
-)
 class CodingAgentState(MessagesState):
-    task: str
+    task: str # provided by caller
     iteration_count: int
     eval_passed: bool
     eval_reasoning: str
     pr_url: str
+
+    repo_url: str       # provided by the caller, e.g. from frontend input
+    bare_path: str       # set by _setup_node: shared bare clone for repo_url
+    repo_path: str       # set by _setup_node: this task's worktree
+    branch: str          # set by _setup_node: branch created for this task's worktree
 
 class CodingAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool], llm_judge: BaseChatModel) -> None:
@@ -43,8 +54,8 @@ class CodingAgent:
             Kubernetes manifest responsible for a reported problem in the GitOps repo below,
             making the smallest correct change, nothing else.
 
-            Repo working directory (always pass this exact string as `working_directory` to
-            every tool call): {GITOPS_REPO_PATH}
+            The `working_directory` to pass to every tool call is provided below, alongside
+            the task, on every turn.
 
             Available tools — this is the complete list, there is no shell, git, or terminal
             access, and no other tool exists: {", ".join(t.name for t in tools)}.
@@ -87,16 +98,19 @@ class CodingAgent:
         self._tool_executor = ToolNode(self.tools)
 
         graph = StateGraph(state_schema=CodingAgentState)
+        graph.add_node("setup_node", self._setup_node)
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
         graph.add_node("evaluation_node", self._evaluation_node)
         graph.add_node("pr_node", self._pr_node)
+        graph.add_node("cleanup_node", self._cleanup_node)
 
-        graph.add_edge(START, "reasoning_node")
+        graph.add_edge(START, "setup_node")
+        graph.add_edge("setup_node", "reasoning_node")
         graph.add_conditional_edges(
             "reasoning_node",
             self._tool_routing,
-            {"tool_node": "tool_node", "evaluation_node": "evaluation_node", "end": END},
+            {"tool_node": "tool_node", "evaluation_node": "evaluation_node", "end": "cleanup_node"},
         )
         graph.add_edge("tool_node", "reasoning_node")
         graph.add_conditional_edges(
@@ -104,14 +118,34 @@ class CodingAgent:
             self._evaluation_routing,
             {"reasoning_node": "reasoning_node", "pr_node": "pr_node"},
         )
-        graph.add_edge("pr_node", END)
+        graph.add_edge("pr_node", "cleanup_node")
+        graph.add_edge("cleanup_node", END)
         return graph.compile()
+
+    def _setup_node(self, state: CodingAgentState) -> dict[str, Any]:
+        self.logger.info("\n=== setup ===")
+        branch = f"agent/{slugify(state['task'])}-{uuid.uuid4().hex[:6]}"
+        with repo_lock(state["repo_url"]):
+            bare_path = ensure_base_clone(state["repo_url"])
+            repo_path = create_task_worktree(bare_path, branch)
+        self.logger.info(f"  repo: {bare_path}")
+        self.logger.info(f"  worktree: {repo_path} (branch {branch})")
+        return {"bare_path": bare_path, "repo_path": repo_path, "branch": branch}
+
+    def _cleanup_node(self, state: CodingAgentState) -> dict[str, Any]:
+        self.logger.info("\n=== cleanup ===")
+        try:
+            remove_task_worktree(state["bare_path"], state["repo_path"])
+            self.logger.info(f"  removed worktree: {state['repo_path']}")
+        except Exception as e:
+            self.logger.info(f"  failed to remove worktree: {e}")
+        return {}
 
     def _reasoning_node(self, state: CodingAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\ntask:\n{state['task']}"
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{state['task']}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
@@ -143,7 +177,7 @@ class CodingAgent:
     def _evaluation_node(self, state: CodingAgentState) -> dict[str, Any]:
         self.logger.info("\n=== evaluation ===")
 
-        files = get_changed_files(GITOPS_REPO_PATH)
+        files = get_changed_files(state["repo_path"])
         self.logger.info(f"  changed files: {files}")
 
         if not files:
@@ -155,7 +189,7 @@ class CodingAgent:
         structureValid = True
 
         for file_path in files:
-            passed, err = self._validate_yaml_syntax(os.path.join(GITOPS_REPO_PATH, file_path))
+            passed, err = self._validate_yaml_syntax(os.path.join(state["repo_path"], file_path))
             if not passed:
                 errorList.append(err)
                 structureValid = False
@@ -167,7 +201,7 @@ class CodingAgent:
                 "messages": [AIMessage(content=f"Review feedback: Error in parsing yaml syntax\nIssues: {json.dumps(errorList)}\nPlease fix.")]
             }
 
-        diff = get_diff_content(GITOPS_REPO_PATH)
+        diff = get_diff_content(state["repo_path"])
         self.logger.info(f"  diff:\n{self._preview(diff, limit=1000)}")
         result = self.llm_as_judge.evaluate(state["task"], diff)
         self.logger.info(f"  judge result: correct={result.correct} reasoning={self._preview(result.reasoning)} issues={result.issues}")
@@ -200,12 +234,11 @@ class CodingAgent:
 
     def _pr_node(self, state: CodingAgentState) -> dict[str, Any]:
         self.logger.info("\n=== opening PR ===")
-        files = get_changed_files(GITOPS_REPO_PATH)
-        branch = f"kubernaut/{slugify(state['task'])}-{uuid.uuid4().hex[:6]}"
+        files = get_changed_files(state["repo_path"])
         try:
             pr_url = open_pull_request(
-                GITOPS_REPO_PATH,
-                branch,
+                state["repo_path"],
+                state["branch"],
                 commit_message=f"fix: {state['task']}",
                 title=state["task"][:72],
                 body=self._build_pr_body(files, state.get("eval_reasoning", "")),
@@ -228,30 +261,3 @@ class CodingAgent:
 
     def invoke(self, initial_state: CodingAgentState) -> CodingAgentState:
         return self.graph.invoke(initial_state)
-
-
-# if __name__ == "__main__":
-#     model = ChatOpenRouter(
-#         model="qwen/qwen3-coder-next",
-#         temperature=0.1,
-#         api_key=os.getenv("OPENROUTER_API_KEY")
-#     )
-#     tools = [list_files_in_directory, read_file_content, grep, find, edit_file, write_file]
-
-#     judge_model = ChatOpenRouter(
-#         model="openai/gpt-5.3-codex",
-#         temperature=0.1,
-#         api_key=os.getenv("OPENROUTER_API_KEY")
-#     )
-
-#     coding_agent = CodingAgent(model, tools, judge_model)
-
-#     task = (
-#         "change the namespace of the 'worker' deployment to 'test' instead of 'demo'"
-#     )
-#     initial_state: CodingAgentState = {
-#         "messages": [HumanMessage(content=task)],
-#         "iteration_count": 0,
-#         "task": task
-#     }
-#     result = coding_agent.invoke(initial_state)

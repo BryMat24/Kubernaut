@@ -31,7 +31,6 @@ def open_pull_request(
     body: str,
     base: str = "main",
 ) -> str:
-    run(["git", "checkout", "-b", branch], repo)
     run(["git", "add", "-A"], repo)
     run(["git", "commit", "-m", commit_message], repo)
     run(["git", "push", "-u", "origin", branch], repo)
