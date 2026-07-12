@@ -92,7 +92,8 @@ def list_resources(
         check=True,
     )
 
-    return json.loads(result.stdout)
+    data = json.loads(result.stdout)
+    return data.get("items", [])
 
 
 @mcp.tool

@@ -8,5 +8,5 @@ app = FastMCP("k8s-mcp-server")
 app.mount(k8s_tools_server)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8080"))
     app.run(transport="http", host="0.0.0.0", port=port)

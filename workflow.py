@@ -2,14 +2,11 @@ import asyncio
 import os
 
 from agents import DiagnosisAgent
-from langchain_mcp_adapters.client import MultiServerMCPClient
+from mcp_clients.k8s_client import get_mcp_tools
 from langchain_openrouter import ChatOpenRouter
 from dotenv import load_dotenv
 
 load_dotenv()
-
-K8S_MCP_SERVER_URL = os.getenv("K8S_MCP_SERVER_URL", "http://localhost:8000/mcp")
-
 
 async def main() -> None:
     llm = ChatOpenRouter(
@@ -18,13 +15,7 @@ async def main() -> None:
         api_key=os.getenv("OPENROUTER_API_KEY")
     )
 
-    client = MultiServerMCPClient({
-        "k8s": {
-            "url": K8S_MCP_SERVER_URL,
-            "transport": "streamable_http",
-        }
-    })
-    tools = await client.get_tools()
+    tools = await get_mcp_tools()
 
     diagnosis_agent = DiagnosisAgent(llm, tools)
     result = await diagnosis_agent.ainvoke({
