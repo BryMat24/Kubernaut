@@ -89,8 +89,8 @@ class DiagnosisAgent:
             "iteration_count": iteration,
         }
     
-    def _tool_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        result = self._tool_executor.invoke(state)
+    async def _tool_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+        result = await self._tool_executor.ainvoke(state)
         for msg in result["messages"]:
             self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result
@@ -112,3 +112,6 @@ class DiagnosisAgent:
 
     def invoke(self, state: DiagnosisAgentState):
         return self.graph.invoke(state)
+
+    async def ainvoke(self, state: DiagnosisAgentState):
+        return await self.graph.ainvoke(state)
