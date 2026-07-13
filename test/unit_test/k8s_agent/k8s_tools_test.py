@@ -101,6 +101,32 @@ def test_get_resource_not_found_propagates(mock_run):
         k8s_tools.get_resource(ResourceKind.POD, "missing-pod")
 
 
+def test_get_resource_cluster_scoped_kind_omits_namespace_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"kind": "Node"}))
+
+    k8s_tools.get_resource(ResourceKind.NODE, "my-node", "default")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "node", "my-node", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def test_get_resource_clusterrole_omits_namespace_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"kind": "ClusterRole"}))
+
+    k8s_tools.get_resource(ResourceKind.CLUSTERROLE, "my-role")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "clusterrole", "my-role", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 # ------------------------------------------------------------------
 # list_resources
 # ------------------------------------------------------------------
@@ -155,29 +181,56 @@ def test_list_resources_empty_namespace_does_not_add_all_namespaces_flag(mock_ru
     )
 
 
+def test_list_resources_cluster_scoped_kind_omits_namespace_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"items": []}))
+
+    k8s_tools.list_resources(ResourceKind.STORAGECLASS, "default")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "storageclass", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 # ------------------------------------------------------------------
 # describe_resource
 # ------------------------------------------------------------------
 
 def test_describe_resource_success(mock_run):
-    description = {"kind": "Pod", "status": {"conditions": []}}
-    mock_run.return_value = make_completed_process(stdout=json.dumps(description))
+    description_text = "Name:  my-pod\nStatus: Running\nConditions:\n  Ready  True\n"
+    mock_run.return_value = make_completed_process(stdout=description_text)
 
     result = k8s_tools.describe_resource(ResourceKind.POD, "my-pod", "default")
 
+    # kubectl describe does not support -o/--output, unlike kubectl get -- no -o json here.
     mock_run.assert_called_once_with(
-        ["kubectl", "describe", "pod", "my-pod", "-n", "default", "-o", "json"],
+        ["kubectl", "describe", "pod", "my-pod", "-n", "default"],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result == description
+    assert result == description_text
 
 
 def test_describe_resource_failure_propagates(mock_run):
     mock_run.side_effect = subprocess.CalledProcessError(1, ["kubectl"])
     with pytest.raises(subprocess.CalledProcessError):
         k8s_tools.describe_resource(ResourceKind.POD, "my-pod")
+
+
+def test_describe_resource_cluster_scoped_kind_omits_namespace_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout="Name: my-node\n")
+
+    k8s_tools.describe_resource(ResourceKind.PERSISTENTVOLUME, "my-pv", "default")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "describe", "pv", "my-pv"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 # ------------------------------------------------------------------

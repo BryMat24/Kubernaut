@@ -19,11 +19,18 @@ class ResourceKind(str, Enum):
     REPLICASET = "replicaset"
     STATEFULSET = "statefulset"
     DAEMONSET = "daemonset"
+    NODE = "node"
+    PERSISTENTVOLUMECLAIM = "pvc"
+    PERSISTENTVOLUME = "pv"
+    STORAGECLASS = "storageclass"
+    RESOURCEQUOTA = "resourcequota"
+    LIMITRANGE = "limitrange"
+    HORIZONTALPODAUTOSCALER = "hpa"
+    NETWORKPOLICY = "networkpolicy"
+    CLUSTERROLE = "clusterrole"
+    CLUSTERROLEBINDING = "clusterrolebinding"
 
 
-# Kubernetes uses PascalCase for the `kind` field on objects and events
-# (e.g. involvedObject.kind), unlike the lowercase names kubectl accepts
-# as CLI resource type arguments.
 _KUBERNETES_KIND_NAMES = {
     ResourceKind.POD: "Pod",
     ResourceKind.DEPLOYMENT: "Deployment",
@@ -35,13 +42,38 @@ _KUBERNETES_KIND_NAMES = {
     ResourceKind.REPLICASET: "ReplicaSet",
     ResourceKind.STATEFULSET: "StatefulSet",
     ResourceKind.DAEMONSET: "DaemonSet",
+    ResourceKind.NODE: "Node",
+    ResourceKind.PERSISTENTVOLUMECLAIM: "PersistentVolumeClaim",
+    ResourceKind.PERSISTENTVOLUME: "PersistentVolume",
+    ResourceKind.STORAGECLASS: "StorageClass",
+    ResourceKind.RESOURCEQUOTA: "ResourceQuota",
+    ResourceKind.LIMITRANGE: "LimitRange",
+    ResourceKind.HORIZONTALPODAUTOSCALER: "HorizontalPodAutoscaler",
+    ResourceKind.NETWORKPOLICY: "NetworkPolicy",
+    ResourceKind.CLUSTERROLE: "ClusterRole",
+    ResourceKind.CLUSTERROLEBINDING: "ClusterRoleBinding",
+}
+
+_CLUSTER_SCOPED_KINDS = {
+    ResourceKind.NODE,
+    ResourceKind.PERSISTENTVOLUME,
+    ResourceKind.STORAGECLASS,
+    ResourceKind.CLUSTERROLE,
+    ResourceKind.CLUSTERROLEBINDING,
 }
 
 
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
-    """List all Kubernetes namespaces in the cluster."""
+    """
+    List all Kubernetes namespaces in the cluster.
+
+    Example: kubectl get namespaces -o json
+
+    Use when: you don't yet know which namespace an app lives in, or need to confirm a
+    namespace exists before running namespaced commands.
+    """
     result = subprocess.run(
         ["kubectl", "get", "namespaces", "-o", "json"],
         capture_output=True,
@@ -68,9 +100,26 @@ def get_resource(
     name: Annotated[str, "Name of the resource."],
     namespace: Annotated[str, "Namespace containing the resource."] = "default",
 ) -> dict:
-    """Retrieve the complete manifest (metadata, spec, status) of a specific Kubernetes resource."""
+    """
+    Retrieve the complete manifest (metadata, spec, status) of a specific Kubernetes resource.
+
+    Example: kubectl get deployment my-app -n default -o json
+
+    Use when: you already know the resource's kind, name, and namespace and need its exact
+    current configuration (image, replicas, env vars, selectors, labels). For human-readable
+    runtime diagnostics (conditions, restart counts, recent events) use describe_resource
+    instead — this tool returns the structured manifest, not runtime state explanations.
+
+    Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
+    StorageClass, ClusterRole, ClusterRoleBinding).
+    """
+    cmd = ["kubectl", "get", kind.value, name]
+    if kind not in _CLUSTER_SCOPED_KINDS:
+        cmd.extend(["-n", namespace])
+    cmd.extend(["-o", "json"])
+
     result = subprocess.run(
-        ["kubectl", "get", kind.value, name, "-n", namespace, "-o", "json"],
+        cmd,
         capture_output=True,
         text=True,
         check=True,
@@ -84,9 +133,24 @@ def list_resources(
     kind: Annotated[ResourceKind, "Kubernetes resource type."],
     namespace: Annotated[str, "Namespace to search. Pass an empty string to search all namespaces."] = "default",
 ) -> list[dict]:
-    """List Kubernetes resources of a given kind, for discovery before inspecting individual resources."""
+    """
+    List Kubernetes resources of a given kind, for discovery before inspecting individual resources.
+
+    Example: kubectl get pod -n default -o json
+
+    Use when: you know the kind but not the exact resource name yet — e.g. finding which pods
+    exist in a namespace before drilling into one with get_resource or describe_resource.
+
+    Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
+    StorageClass, ClusterRole, ClusterRoleBinding).
+    """
+    cmd = ["kubectl", "get", kind.value]
+    if kind not in _CLUSTER_SCOPED_KINDS:
+        cmd.extend(["-n", namespace])
+    cmd.extend(["-o", "json"])
+
     result = subprocess.run(
-        ["kubectl", "get", kind.value, "-n", namespace, "-o", "json"],
+        cmd,
         capture_output=True,
         text=True,
         check=True,
@@ -101,16 +165,33 @@ def describe_resource(
     kind: Annotated[ResourceKind, "Kubernetes resource type."],
     name: Annotated[str, "Resource name."],
     namespace: Annotated[str, "Namespace containing the resource."] = "default",
-) -> dict:
-    """Retrieve a detailed runtime description (conditions, restart counts, scheduling, recent events) — use when investigating why a resource is unhealthy."""
+) -> str:
+    """
+    Retrieve a detailed, human-readable runtime description of a resource (conditions,
+    container states, restart counts, scheduling, recent events).
+
+    Example: kubectl describe pod my-pod -n default
+
+    Use when: investigating why a resource is unhealthy — this surfaces runtime information
+    Kubernetes generates (probe failures, scheduling decisions, recent events) that the plain
+    manifest from get_resource does not include. Unlike the other tools here, this returns
+    formatted text, not JSON.
+
+    Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
+    StorageClass, ClusterRole, ClusterRoleBinding).
+    """
+    cmd = ["kubectl", "describe", kind.value, name]
+    if kind not in _CLUSTER_SCOPED_KINDS:
+        cmd.extend(["-n", namespace])
+
     result = subprocess.run(
-        ["kubectl", "describe", kind.value, name, "-n", namespace, "-o", "json"],
+        cmd,
         capture_output=True,
         text=True,
         check=True,
     )
 
-    return json.loads(result.stdout)
+    return result.stdout
 
 
 # EVENTS
@@ -120,7 +201,18 @@ def get_events(
     kind: Annotated[ResourceKind | None, "Resource type to filter events by."] = None,
     name: Annotated[str | None, "Resource name to filter by. Must be provided together with kind."] = None,
 ) -> list[dict]:
-    """Retrieve recent Kubernetes events, explaining actions taken by the control plane (scheduling, image pulls, volume mounts, rollouts, probe failures)."""
+    """
+    Retrieve recent Kubernetes events, explaining actions taken by the control plane
+    (scheduling, image pulls, volume mounts, rollouts, probe failures).
+
+    Example: kubectl get events --sort-by=.lastTimestamp -o json -n default
+    Example (filtered to one resource): kubectl get events --sort-by=.lastTimestamp -o json
+    -n default --field-selector involvedObject.kind=Pod,involvedObject.name=my-pod
+
+    Use when: you need to know why something happened (FailedScheduling, ImagePullBackOff,
+    FailedMount) rather than what the current state is — get_resource/describe_resource show
+    state, this shows the history of control-plane actions and failures.
+    """
     cmd = ["kubectl", "get", "events", "--sort-by=.lastTimestamp", "-o", "json"]
 
     if namespace:
@@ -162,7 +254,15 @@ def get_pod_logs(
     container: Annotated[str | None, "Container name, for multi-container Pods."] = None,
     tail: Annotated[int, "Number of recent log lines to retrieve."] = 100,
 ) -> str:
-    """Retrieve logs from a running container."""
+    """
+    Retrieve logs from a running container.
+
+    Example: kubectl logs my-pod -n default --tail=100
+
+    Use when: the container is currently running (or was last terminated normally) and you
+    need to see recent application output or errors. If the container has restarted and you
+    suspect a crash, use get_previous_logs instead — this only shows the current instance.
+    """
     cmd = ["kubectl", "logs", pod, "-n", namespace, f"--tail={tail}"]
 
     if container:
@@ -185,7 +285,15 @@ def get_previous_logs(
     container: Annotated[str | None, "Container name, for multi-container Pods."] = None,
     tail: Annotated[int, "Number of recent log lines to retrieve."] = 100,
 ) -> str:
-    """Retrieve logs from the previous instance of a restarted container — use for diagnosing CrashLoopBackOff."""
+    """
+    Retrieve logs from the previous instance of a restarted container.
+
+    Example: kubectl logs my-pod -n default --previous --tail=100
+
+    Use when: diagnosing CrashLoopBackOff or any restart — the current container's logs
+    (get_pod_logs) would only show the new instance since restart, missing the actual crash
+    reason, which only exists in the previous instance's logs.
+    """
     cmd = ["kubectl", "logs", pod, "-n", namespace, "--previous", f"--tail={tail}"]
 
     if container:
@@ -205,7 +313,15 @@ def get_previous_logs(
 def top_pods(
     namespace: Annotated[str, "Namespace to inspect. Pass an empty string for all namespaces."] = "default",
 ) -> list[dict]:
-    """Retrieve current CPU and memory usage for Pods — use when investigating high CPU, excessive memory, or OOMKilled containers."""
+    """
+    Retrieve current CPU and memory usage for Pods.
+
+    Example: kubectl top pods -n default
+
+    Use when: investigating high CPU, excessive memory usage, application slowness, or
+    OOMKilled containers — confirms whether resource exhaustion is actually occurring before
+    looking elsewhere.
+    """
     cmd = ["kubectl", "top", "pods"]
 
     if namespace:
@@ -247,7 +363,15 @@ def top_pods(
 
 @mcp.tool
 def top_nodes() -> list[dict]:
-    """Retrieve current CPU and memory usage for Kubernetes nodes — use when investigating cluster-wide resource pressure or scheduling failures."""
+    """
+    Retrieve current CPU and memory usage for Kubernetes nodes.
+
+    Example: kubectl top nodes
+
+    Use when: investigating cluster-wide resource pressure or scheduling failures
+    (FailedScheduling due to insufficient CPU/memory) that might stem from node capacity
+    rather than any single pod's configuration.
+    """
     result = subprocess.run(
         ["kubectl", "top", "nodes"],
         capture_output=True,
@@ -277,7 +401,14 @@ def rollout_status(
     deployment: Annotated[str, "Name of the Deployment."],
     namespace: Annotated[str, "Namespace containing the Deployment."] = "default",
 ) -> dict:
-    """Check whether a Deployment rollout has completed or is still progressing."""
+    """
+    Check whether a Deployment rollout has completed or is still progressing.
+
+    Example: kubectl rollout status deployment/my-app -n default --watch=false
+
+    Use when: confirming whether a recent Deployment change (image update, replica change) has
+    finished rolling out successfully, or is stuck/still in progress.
+    """
     result = subprocess.run(
         ["kubectl", "rollout", "status", f"deployment/{deployment}", "-n", namespace, "--watch=false"],
         capture_output=True,
@@ -300,7 +431,15 @@ def check_service_connectivity(
     service: Annotated[str, "Name of the Service."],
     namespace: Annotated[str, "Namespace containing the Service."] = "default",
 ) -> dict:
-    """Check whether a Kubernetes Service has ready endpoints (backing pods) — use for diagnosing "service unreachable" or "connection refused" reports."""
+    """
+    Check whether a Kubernetes Service has ready endpoints (backing pods).
+
+    Example: kubectl get endpoints my-service -n default -o json
+
+    Use when: diagnosing "service unreachable" or "connection refused" reports — confirms
+    whether the Service actually has ready backing pods. A common root cause when this comes
+    back empty is a label-selector mismatch between the Service and its target Pods.
+    """
     result = subprocess.run(
         ["kubectl", "get", "endpoints", service, "-n", namespace, "-o", "json"],
         capture_output=True,
