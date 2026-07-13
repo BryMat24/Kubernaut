@@ -1,0 +1,13 @@
+{
+  "scenario_id": "secret-wrong-key-reference",
+  "expected_root_cause": "The pod references the key db_password from Secret sample-secret via secretKeyRef, but the Secret only contains the key password -- a key name mismatch. The Secret itself exists and is otherwise fine; only the specific key reference is wrong, which causes a CreateContainerConfigError and prevents the pod from starting.",
+  "key_evidence": [
+    "get_events shows an event mentioning couldn't find key db_password in Secret, or CreateContainerConfigError",
+    "get_resource(kind=SECRET) shows sample-secret exists and contains a password key, but not db_password"
+  ],
+  "should_not_conclude": [
+    "The Secret sample-secret does not exist",
+    "Image pull failure",
+    "Insufficient CPU or memory"
+  ]
+}
