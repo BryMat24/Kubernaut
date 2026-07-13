@@ -64,6 +64,21 @@ class KubernetesAgent:
             - If two tools give apparently conflicting information, investigate the
             discrepancy before concluding — don't silently pick whichever result
             came first.
+            - For HorizontalPodAutoscaler (HPA) issues, inspect both the HPA's own
+            status/conditions (get_resource or describe_resource, kind=hpa) AND the
+            scale target's container resources.requests (get_resource or
+            list_resources, kind=deployment). An HPA reporting an unknown or missing
+            current metric is frequently NOT caused by the metrics-server being down
+            — it is very often caused by the target container missing a
+            resources.requests entry for the metric being scaled on (e.g. no CPU
+            request means the HPA cannot compute a CPU utilization percentage, even
+            though the cluster's metrics pipeline is otherwise healthy). Do not
+            conclude the metrics-server or metrics pipeline is broken unless you have
+            directly checked the target's resource requests and confirmed they are
+            set. Conversely, an HPA condition of type ScalingLimited with reason
+            TooManyReplicas, and currentReplicas equal to maxReplicas, means
+            autoscaling IS working correctly and is intentionally capped by
+            configuration — that is not a malfunction.
         """
         self.graph = self._build_graph()
 

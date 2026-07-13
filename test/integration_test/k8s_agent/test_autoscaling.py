@@ -49,6 +49,29 @@ def _apply_manifest(scenario_id: str, namespace: str) -> None:
     _kubectl("apply", "-f", str(manifest), "-n", namespace)
 
 
+def _wait_for_hpa_current_replicas(
+    namespace: str, hpa_name: str, target: int, timeout: float = 120.0
+) -> None:
+    """Poll until the HPA's status.currentReplicas reaches `target`, or timeout elapses.
+
+    metrics-server needs time to scrape CPU usage for a brand-new pod, and the HPA
+    controller itself only syncs on its own ~15s interval. Without this wait, the
+    HPA can still be reporting no current metrics by the time the agent starts
+    investigating, so the scenario's intended ScalingLimited/TooManyReplicas
+    condition hasn't materialized yet.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = _kubectl(
+            "get", "hpa", hpa_name, "-n", namespace,
+            "-o", "jsonpath={.status.currentReplicas}",
+            check=False,
+        )
+        if result.stdout.strip() == str(target):
+            return
+        time.sleep(3)
+
+
 @pytest.fixture(scope="session")
 def mcp_server():
     proc = subprocess.Popen(
@@ -122,6 +145,7 @@ def hpa_capped_at_max_replicas_scenario():
     namespace = "test-hpa-capped-at-max-replicas"
     _kubectl("create", "namespace", namespace)
     _apply_manifest("hpa-capped-at-max-replicas", namespace)
+    _wait_for_hpa_current_replicas(namespace, "sample-app-hpa", target=2)
     try:
         yield namespace
     finally:

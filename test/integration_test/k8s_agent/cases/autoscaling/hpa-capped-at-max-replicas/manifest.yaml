@@ -16,7 +16,8 @@ spec:
     spec:
       containers:
         - name: app
-          image: nginx:latest
+          image: busybox:latest
+          command: ["sh", "-c", "while true; do :; done"]
           resources:
             requests:
               cpu: "10m"
