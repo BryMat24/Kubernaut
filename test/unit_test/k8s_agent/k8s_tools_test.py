@@ -127,6 +127,19 @@ def test_get_resource_clusterrole_omits_namespace_flag(mock_run):
     )
 
 
+def test_get_resource_clusterrolebinding_omits_namespace_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"kind": "ClusterRoleBinding"}))
+
+    k8s_tools.get_resource(ResourceKind.CLUSTERROLEBINDING, "my-binding")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "clusterrolebinding", "my-binding", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 # ------------------------------------------------------------------
 # list_resources
 # ------------------------------------------------------------------

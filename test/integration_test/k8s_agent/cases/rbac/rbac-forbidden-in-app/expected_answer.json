@@ -1,0 +1,13 @@
+{
+  "scenario_id": "rbac-forbidden-in-app",
+  "expected_root_cause": "The pod runs under the sample-sa ServiceAccount, which has no RBAC permissions granted (no ClusterRoleBinding or RoleBinding references it). Its in-cluster API call fails with a 403 Forbidden error, visible in the pod's logs, causing the container to keep failing and restarting.",
+  "key_evidence": [
+    "get_pod_logs shows a Forbidden error, e.g. pods is forbidden: User \"system:serviceaccount:<namespace>:sample-sa\" cannot list resource",
+    "No ClusterRoleBinding (or RoleBinding) exists that grants sample-sa the permission it's trying to use"
+  ],
+  "should_not_conclude": [
+    "Image pull failure",
+    "An application code bug unrelated to permissions",
+    "Insufficient CPU or memory"
+  ]
+}
