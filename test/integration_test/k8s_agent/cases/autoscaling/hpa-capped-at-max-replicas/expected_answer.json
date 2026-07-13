@@ -1,0 +1,13 @@
+{
+  "scenario_id": "hpa-capped-at-max-replicas",
+  "expected_root_cause": "The HorizontalPodAutoscaler sample-app-hpa is working correctly and scaling in response to real CPU load, but maxReplicas is set to 2, which is below what the observed load actually calls for. The HPA's own ScalingLimited condition (reason TooManyReplicas) confirms autoscaling itself is functioning -- the replica count is being intentionally capped by configuration, not stuck due to a malfunction.",
+  "key_evidence": [
+    "get_resource(kind=HORIZONTALPODAUTOSCALER) or describe_resource(kind=HORIZONTALPODAUTOSCALER) shows a status condition with type ScalingLimited, status True, and reason TooManyReplicas",
+    "currentReplicas equals maxReplicas (2)"
+  ],
+  "should_not_conclude": [
+    "Autoscaling is broken or misconfigured",
+    "The HPA is not detecting load at all",
+    "Metrics are unavailable"
+  ]
+}

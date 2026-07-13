@@ -1,0 +1,13 @@
+{
+  "scenario_id": "rollout-complete-but-broken",
+  "expected_root_cause": "The sample-app Deployment's rollout completed successfully -- rollout_status reports it as complete, and the pod is Running with no restarts -- but the application itself is functionally broken. Its logs show continuous fatal errors (unable to connect to upstream dependency). A completed rollout is not proof the application is healthy; the logs reveal the real problem.",
+  "key_evidence": [
+    "rollout_status reports the deployment rollout as complete",
+    "get_pod_logs shows repeated FATAL / unable to connect to upstream dependency messages"
+  ],
+  "should_not_conclude": [
+    "The rollout itself failed, is stuck, or is still in progress",
+    "The pod is crashlooping or failing to start",
+    "An image pull or scheduling failure occurred"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "resourcequota-exhausted",
+  "expected_root_cause": "The namespace's ResourceQuota limits pods to 1, but the sample-app Deployment requests 3 replicas. Only 1 pod is actually created; the ReplicaSet controller fails to create the remaining 2 because the quota is exceeded. This shows up as a FailedCreate event on the ReplicaSet, not on any pod, since the extra pods are never created at all.",
+  "key_evidence": [
+    "get_events shows a FailedCreate event on the ReplicaSet mentioning exceeded quota",
+    "get_resource(kind=RESOURCEQUOTA) shows hard.pods=1 and used.pods=1",
+    "The Deployment/ReplicaSet shows desired=3 replicas but only 1 ready/available"
+  ],
+  "should_not_conclude": [
+    "The extra pods are crashlooping or failing health checks",
+    "Image pull failure",
+    "Insufficient node CPU or memory capacity"
+  ]
+}

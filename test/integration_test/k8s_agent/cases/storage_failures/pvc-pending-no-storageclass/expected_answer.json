@@ -1,0 +1,14 @@
+{
+  "scenario_id": "pvc-pending-no-storageclass",
+  "expected_root_cause": "The PersistentVolumeClaim sample-pvc references a StorageClass (nonexistent-storage-class) that does not exist in the cluster, so no PersistentVolume can be provisioned or bound, and the pod mounting it stays Pending.",
+  "key_evidence": [
+    "The PVC's status is Pending",
+    "An event on the PVC or pod mentioning the nonexistent-storage-class StorageClass could not be found, or no persistent volumes available",
+    "list_resources(kind=STORAGECLASS) does not show a StorageClass named nonexistent-storage-class"
+  ],
+  "should_not_conclude": [
+    "Insufficient CPU or memory",
+    "Image pull failure",
+    "A node taint or scheduling issue unrelated to storage"
+  ]
+}

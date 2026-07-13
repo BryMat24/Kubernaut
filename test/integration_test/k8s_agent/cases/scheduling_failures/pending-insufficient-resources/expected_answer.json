@@ -1,0 +1,13 @@
+{
+  "scenario_id": "pending-insufficient-resources",
+  "expected_root_cause": "The pod's container requests far more CPU (100 cores) than any node in the cluster has available, so the scheduler cannot find a node with sufficient allocatable capacity and the pod stays Pending.",
+  "key_evidence": [
+    "A FailedScheduling event on the pod mentioning insufficient cpu",
+    "top_nodes or node capacity/allocatable figures showing far less CPU available than the pod requests"
+  ],
+  "should_not_conclude": [
+    "Image pull failure",
+    "CrashLoopBackOff",
+    "A node taint or nodeSelector mismatch is the cause"
+  ]
+}

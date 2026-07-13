@@ -1,0 +1,14 @@
+{
+  "scenario_id": "node-disk-memory-pressure",
+  "expected_root_cause": "The node kind-control-plane is reporting DiskPressure and MemoryPressure conditions as True. Kubernetes automatically applies NoSchedule taints (node.kubernetes.io/disk-pressure, node.kubernetes.io/memory-pressure) in response to those conditions, and the pod has no matching toleration, so it stays Pending. The root cause is the node's pressure conditions, not the pod's own configuration or an arbitrary/manually-configured scheduling policy.",
+  "key_evidence": [
+    "get_node_conditions shows DiskPressure and/or MemoryPressure conditions with status True on kind-control-plane",
+    "A FailedScheduling event on the pod, or the node's taints field showing the auto-applied disk-pressure/memory-pressure NoSchedule taints",
+    "The pod spec has no toleration for the pressure-related taints"
+  ],
+  "should_not_conclude": [
+    "The pod's own resource requests are misconfigured",
+    "An image pull or application-level crash caused the issue",
+    "An arbitrary or manually-configured taint/nodeSelector unrelated to node health is the cause"
+  ]
+}
