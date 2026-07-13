@@ -200,10 +200,6 @@ def get_previous_logs(
 
     return result.stdout
 
-
-# TODO
-# RELATIONSHIPS
-
 # METRICS
 @mcp.tool
 def top_pods(
