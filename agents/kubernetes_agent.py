@@ -13,15 +13,15 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-class DiagnosisAgentState(MessagesState):
+class KubernetesAgentState(MessagesState):
     query: str
     iteration_count: int
 
-class DiagnosisAgent:
+class KubernetesAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool]) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
-        self.logger = logging.getLogger("diagnosisAgent")
+        self.logger = logging.getLogger("kubernetesAgent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""
             You are a Kubernetes diagnosis agent. You are read-only: you never modify
@@ -58,7 +58,7 @@ class DiagnosisAgent:
     def _build_graph(self) -> CompiledStateGraph:
         self._tool_executor = ToolNode(self.tools)
 
-        graph = StateGraph(state_schema=DiagnosisAgentState)
+        graph = StateGraph(state_schema=KubernetesAgentState)
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
 
@@ -71,7 +71,7 @@ class DiagnosisAgent:
         graph.add_edge("tool_node", "reasoning_node")
         return graph.compile()
 
-    def _reasoning_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+    def _reasoning_node(self, state: KubernetesAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
@@ -89,13 +89,13 @@ class DiagnosisAgent:
             "iteration_count": iteration,
         }
     
-    async def _tool_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+    async def _tool_node(self, state: KubernetesAgentState) -> dict[str, Any]:
         result = await self._tool_executor.ainvoke(state)
         for msg in result["messages"]:
             self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result
 
-    def _tool_routing(self, state: DiagnosisAgentState) -> Literal["tool_node", "end"]:
+    def _tool_routing(self, state: KubernetesAgentState) -> Literal["tool_node", "end"]:
         if state.get("iteration_count", 0) >= self.MAX_ITERATIONS:
             self.logger.info(f"  hit MAX_ITERATIONS ({self.MAX_ITERATIONS}), stopping")
             return "end"
@@ -110,8 +110,8 @@ class DiagnosisAgent:
         text = str(text)
         return text if len(text) <= limit else text[:limit] + "... [truncated]"
 
-    def invoke(self, state: DiagnosisAgentState):
+    def invoke(self, state: KubernetesAgentState):
         return self.graph.invoke(state)
 
-    async def ainvoke(self, state: DiagnosisAgentState):
+    async def ainvoke(self, state: KubernetesAgentState):
         return await self.graph.ainvoke(state)

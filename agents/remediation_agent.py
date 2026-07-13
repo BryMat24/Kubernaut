@@ -25,7 +25,7 @@ import os
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-class CodingAgentState(MessagesState):
+class RemediationAgentState(MessagesState):
     task: str # provided by caller
     iteration_count: int
     eval_passed: bool
@@ -37,13 +37,13 @@ class CodingAgentState(MessagesState):
     repo_path: str       # set by _setup_node: this task's worktree
     branch: str          # set by _setup_node: branch created for this task's worktree
 
-class CodingAgent:
+class RemediationAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool], llm_judge: BaseChatModel) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
         self.graph = self._build_graph()
         self.llm_as_judge = DiffEvaluator(llm_judge)
-        self.logger = logging.getLogger("coding_agent")
+        self.logger = logging.getLogger("remediation_agent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""
             You are a GitOps repair agent. Your job is to find and fix the
@@ -93,7 +93,7 @@ class CodingAgent:
     def _build_graph(self) -> CompiledStateGraph:
         self._tool_executor = ToolNode(self.tools)
 
-        graph = StateGraph(state_schema=CodingAgentState)
+        graph = StateGraph(state_schema=RemediationAgentState)
         graph.add_node("setup_node", self._setup_node)
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
@@ -118,7 +118,7 @@ class CodingAgent:
         graph.add_edge("cleanup_node", END)
         return graph.compile()
 
-    def _setup_node(self, state: CodingAgentState) -> dict[str, Any]:
+    def _setup_node(self, state: RemediationAgentState) -> dict[str, Any]:
         self.logger.info("\n=== setup ===")
         branch = f"agent/{slugify(state['task'])}-{uuid.uuid4().hex[:6]}"
         with repo_lock(state["repo_url"]):
@@ -128,7 +128,7 @@ class CodingAgent:
         self.logger.info(f"  worktree: {repo_path} (branch {branch})")
         return {"bare_path": bare_path, "repo_path": repo_path, "branch": branch}
 
-    def _cleanup_node(self, state: CodingAgentState) -> dict[str, Any]:
+    def _cleanup_node(self, state: RemediationAgentState) -> dict[str, Any]:
         self.logger.info("\n=== cleanup ===")
         try:
             remove_task_worktree(state["bare_path"], state["repo_path"])
@@ -137,7 +137,7 @@ class CodingAgent:
             self.logger.info(f"  failed to remove worktree: {e}")
         return {}
 
-    def _reasoning_node(self, state: CodingAgentState) -> dict[str, Any]:
+    def _reasoning_node(self, state: RemediationAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
@@ -155,13 +155,13 @@ class CodingAgent:
             "iteration_count": iteration,
         }
 
-    def _tool_node(self, state: CodingAgentState) -> dict[str, Any]:
+    def _tool_node(self, state: RemediationAgentState) -> dict[str, Any]:
         result = self._tool_executor.invoke(state)
         for msg in result["messages"]:
             self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result
 
-    def _tool_routing(self, state: CodingAgentState) -> Literal["tool_node", "evaluation_node", "end"]:
+    def _tool_routing(self, state: RemediationAgentState) -> Literal["tool_node", "evaluation_node", "end"]:
         if state.get("iteration_count", 0) >= self.MAX_ITERATIONS:
             self.logger.info(f"  hit MAX_ITERATIONS ({self.MAX_ITERATIONS}), stopping")
             return "end"
@@ -170,7 +170,7 @@ class CodingAgent:
             return "tool_node"
         return "evaluation_node"
     
-    def _evaluation_node(self, state: CodingAgentState) -> dict[str, Any]:
+    def _evaluation_node(self, state: RemediationAgentState) -> dict[str, Any]:
         self.logger.info("\n=== evaluation ===")
 
         files = get_changed_files(state["repo_path"])
@@ -221,14 +221,14 @@ class CodingAgent:
         except Exception as e:
             return False, f"Error in parsing yaml of file: {file_path}, error: {e}"
     
-    def _evaluation_routing(self, state: CodingAgentState) -> Literal["reasoning_node", "pr_node"]:
+    def _evaluation_routing(self, state: RemediationAgentState) -> Literal["reasoning_node", "pr_node"]:
         if state["eval_passed"]:
             self.logger.info("  routing: evaluation_node -> pr_node")
             return "pr_node"
         self.logger.info("  routing: evaluation_node -> reasoning_node")
         return "reasoning_node"
 
-    def _pr_node(self, state: CodingAgentState) -> dict[str, Any]:
+    def _pr_node(self, state: RemediationAgentState) -> dict[str, Any]:
         self.logger.info("\n=== opening PR ===")
         files = get_changed_files(state["repo_path"])
         try:
@@ -255,5 +255,5 @@ class CodingAgent:
         text = str(text)
         return text if len(text) <= limit else text[:limit] + "... [truncated]"
 
-    def invoke(self, initial_state: CodingAgentState) -> CodingAgentState:
+    def invoke(self, initial_state: RemediationAgentState) -> RemediationAgentState:
         return self.graph.invoke(initial_state)

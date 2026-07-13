@@ -1,2 +1,2 @@
-from .coding_agent import CodingAgent
-from .diagnosis_agent import DiagnosisAgent
+from .remediation_agent import RemediationAgent
+from .kubernetes_agent import KubernetesAgent
