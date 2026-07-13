@@ -1,0 +1,268 @@
+{
+    "category_1": {
+        "name": "Scheduling failures",
+        "tool_coverage": [
+            "get_events",
+            "get_node_conditions",
+            "top_nodes",
+            "list_resources"
+        ],
+        "scenarios": [
+            {
+                "id": "pending-insufficient-resources",
+                "title": "Pod stuck Pending — insufficient CPU/memory request",
+                "tools_exercised": ["get_events", "top_nodes"],
+                "notes": "Already covered in Tier 1",
+                "priority": "eval"
+            },
+            {
+                "id": "pending-taint-no-toleration",
+                "title": "Pod stuck Pending — node has NoSchedule taint, pod has no matching toleration",
+                "tools_exercised": ["get_events", "get_node_conditions"],
+                "notes": "Only scenario exercising get_node_conditions' taints field",
+                "priority": "eval"
+            },
+            {
+                "id": "pending-nodeselector-mismatch",
+                "title": "Pod stuck Pending — nodeSelector references a label no node has",
+                "tools_exercised": ["get_events", "list_resources(kind=NODE)"],
+                "notes": "Tests whether agent lists nodes and checks labels vs assuming capacity issue",
+                "priority": "skip"
+            },
+            {
+                "id": "node-disk-memory-pressure",
+                "title": "Node under DiskPressure/MemoryPressure, pods evicted cluster-wide",
+                "tools_exercised": ["get_node_conditions", "get_events"],
+                "notes": "Exercises conditions field of get_node_conditions, distinct from taints",
+                "priority": "eval"
+            }
+        ]
+    },
+    "category_2": {
+        "name": "Storage failures",
+        "tool_coverage": [
+            "get_resource(PVC/PV/StorageClass)",
+            "get_events",
+            "describe_resource"
+        ],
+        "scenarios": [
+            {
+                "id": "pvc-pending-no-storageclass",
+                "title": "PVC stuck Pending — no StorageClass matches / no PV available",
+                "tools_exercised": [
+                    "get_resource(kind=PVC)",
+                    "get_events",
+                    "list_resources(kind=STORAGECLASS)"
+                ],
+                "notes": "First test exercising storage kinds at all",
+                "priority": "eval"
+            },
+            {
+                "id": "volume-mount-wrong-access-mode",
+                "title": "Pod stuck ContainerCreating — volume mount failure (PVC bound but wrong access mode)",
+                "tools_exercised": [
+                    "get_events",
+                    "describe_resource(kind=POD)"
+                ],
+                "notes": "Tests discrimination between PVC-never-bound vs bound-but-unmountable",
+                "priority": "skip"
+            },
+            {
+                "id": "statefulset-pvc-bad-storageclass",
+                "title": "StatefulSet pod stuck — PVC template references nonexistent StorageClass",
+                "tools_exercised": [
+                    "list_resources(kind=STATEFULSET)",
+                    "get_resource(kind=PVC)"
+                ],
+                "notes": "Exercises StatefulSet-specific per-replica PVC behavior",
+                "priority": "skip"
+            }
+        ]
+    },
+    "category_3": {
+        "name": "Resource governance",
+        "tool_coverage": [
+            "get_resource(ResourceQuota/LimitRange)",
+            "get_events"
+        ],
+        "scenarios": [
+            {
+                "id": "resourcequota-exhausted",
+                "title": "Deployment scale-up fails silently — namespace ResourceQuota exhausted",
+                "tools_exercised": [
+                    "get_events",
+                    "get_resource(kind=RESOURCEQUOTA)"
+                ],
+                "notes": "Tricky: root cause only visible in ReplicaSet events, not pod events. High-value discrimination test",
+                "priority": "eval"
+            },
+            {
+                "id": "limitrange-rejection",
+                "title": "Pod creation rejected — LimitRange enforces a max the pod spec exceeds",
+                "tools_exercised": [
+                    "get_events",
+                    "get_resource(kind=LIMITRANGE)"
+                ],
+                "notes": "Tests tracing admission-time rejection to a namespace-level policy object",
+                "priority": "unit"
+            }
+        ]
+    },
+    "category_4": {
+        "name": "Autoscaling",
+        "tool_coverage": ["get_resource(HPA)", "describe_resource", "top_pods"],
+        "scenarios": [
+            {
+                "id": "hpa-metrics-unavailable",
+                "title": "HPA not scaling up despite high CPU — metrics-server unavailable, HPA shows unknown target",
+                "tools_exercised": [
+                    "get_resource(kind=HORIZONTALPODAUTOSCALER)",
+                    "top_pods"
+                ],
+                "notes": "Two-hop root cause: HPA stuck -> metrics pipeline broken",
+                "priority": "eval"
+            },
+            {
+                "id": "hpa-capped-at-max-replicas",
+                "title": "HPA scaling correctly but max replicas capped below actual demand",
+                "tools_exercised": [
+                    "get_resource(kind=HORIZONTALPODAUTOSCALER)",
+                    "describe_resource(kind=HPA)"
+                ],
+                "notes": "Red-herring/Tier 4 style — correct answer is 'config limits it', not 'autoscaling broken'",
+                "priority": "eval"
+            }
+        ]
+    },
+    "category_5": {
+        "name": "Networking / security",
+        "tool_coverage": [
+            "list_resources(NetworkPolicy)",
+            "check_service_connectivity",
+            "get_pod_logs"
+        ],
+        "scenarios": [
+            {
+                "id": "networkpolicy-ingress-deny",
+                "title": "Pod-to-pod connectivity blocked — restrictive NetworkPolicy denies ingress",
+                "tools_exercised": [
+                    "check_service_connectivity",
+                    "list_resources(kind=NETWORKPOLICY)"
+                ],
+                "notes": "Critical: check_service_connectivity returns ready endpoints=true, agent must not stop there",
+                "priority": "eval"
+            },
+            {
+                "id": "networkpolicy-egress-deny",
+                "title": "Egress blocked — pod can't reach external dependency due to default-deny egress policy",
+                "tools_exercised": [
+                    "list_resources(kind=NETWORKPOLICY)",
+                    "get_pod_logs"
+                ],
+                "notes": "Distinct log signature from ingress-deny case",
+                "priority": "skip"
+            }
+        ]
+    },
+    "category_6": {
+        "name": "RBAC / cluster-scoped resources",
+        "tool_coverage": [
+            "get_pod_logs",
+            "get_resource(ClusterRole/ClusterRoleBinding)"
+        ],
+        "scenarios": [
+            {
+                "id": "rbac-forbidden-in-app",
+                "title": "ServiceAccount missing permissions — pod's controller logic fails with Forbidden in logs",
+                "tools_exercised": [
+                    "get_pod_logs",
+                    "get_resource(kind=CLUSTERROLEBINDING)"
+                ],
+                "notes": "Also exercises cluster-scoped namespace-ignoring code path — worth a dedicated unit test independent of the eval",
+                "priority": "eval+unit"
+            }
+        ]
+    },
+    "category_7": {
+        "name": "Rollout-specific",
+        "tool_coverage": [
+            "rollout_status",
+            "list_resources(ReplicaSet)",
+            "describe_resource"
+        ],
+        "scenarios": [
+            {
+                "id": "rollout-stuck-new-rs-failing",
+                "title": "Deployment rollout stuck mid-progress — new ReplicaSet pods failing readiness",
+                "tools_exercised": [
+                    "rollout_status",
+                    "list_resources(kind=REPLICASET)",
+                    "describe_resource(kind=POD)"
+                ],
+                "notes": "Tests comparing old vs new ReplicaSet, not just describing one pod",
+                "priority": "skip"
+            },
+            {
+                "id": "rollout-complete-but-broken",
+                "title": "Rollout 'completed' per rollout_status but app is functionally broken",
+                "tools_exercised": ["rollout_status", "get_pod_logs"],
+                "notes": "Red herring: rollout_status says success, correct diagnosis must not trust that as proof of health",
+                "priority": "eval"
+            }
+        ]
+    },
+    "category_8": {
+        "name": "Secret / ConfigMap edge cases",
+        "tool_coverage": ["get_resource(Secret)", "get_events"],
+        "scenarios": [
+            {
+                "id": "secret-wrong-key-reference",
+                "title": "Secret exists but wrong key referenced (secretKeyRef.key mismatch)",
+                "tools_exercised": ["get_resource(kind=SECRET)", "get_events"],
+                "notes": "Distinct from 'ConfigMap missing' — object exists, key reference is wrong",
+                "priority": "eval"
+            }
+        ]
+    },
+    "category_9": {
+        "name": "Ingress routing",
+        "tool_coverage": [
+            "get_resource(Ingress)",
+            "check_service_connectivity"
+        ],
+        "scenarios": [
+            {
+                "id": "ingress-wrong-port-or-host-rule",
+                "title": "Ingress routes to wrong Service port, or pathType/host rule doesn't match",
+                "tools_exercised": [
+                    "get_resource(kind=INGRESS)",
+                    "check_service_connectivity"
+                ],
+                "notes": "Same 'service itself is fine' discriminator pattern as networkpolicy-ingress-deny, different layer. Currently a total coverage gap.",
+                "priority": "eval"
+            }
+        ]
+    },
+    "meta": {
+        "priority_legend": {
+            "eval": "Full LLM-graded scenario: manifest + expected-answer JSON + tests/evals test",
+            "unit": "Mocked pytest only, no cluster/LLM needed — verifies tool code logic",
+            "eval+unit": "Needs both — unit test for the tool-level code path, eval for agent reasoning quality",
+            "skip": "Documented gap only, note in docs/production-next-steps.md, no test built for the 2-3 week timeline"
+        },
+        "recommended_eval_set_for_timeline": [
+            "pending-insufficient-resources",
+            "pending-taint-no-toleration",
+            "node-disk-memory-pressure",
+            "pvc-pending-no-storageclass",
+            "resourcequota-exhausted",
+            "hpa-metrics-unavailable",
+            "hpa-capped-at-max-replicas",
+            "networkpolicy-ingress-deny",
+            "rbac-forbidden-in-app",
+            "rollout-complete-but-broken",
+            "secret-wrong-key-reference",
+            "ingress-wrong-port-or-host-rule"
+        ]
+    }
+}

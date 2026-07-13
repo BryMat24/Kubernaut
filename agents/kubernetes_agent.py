@@ -37,21 +37,33 @@ class KubernetesAgent:
             Available tools — this is the complete list, there is no shell or kubectl
             access beyond these: {", ".join(t.name for t in tools)}.
 
-            Use them as needed, for example:
-            - `list_namespaces` to discover namespaces.
-            - `list_resources` to find resources of a given kind.
-            - `get_resource` / `describe_resource` to inspect configuration and runtime
-            state (conditions, restart counts, scheduling, recent events).
-            - `get_events` to understand why Kubernetes took or failed to take an action.
-            - `get_pod_logs` / `get_previous_logs` for application behavior, especially
-            CrashLoopBackOff or failed startups.
-            - `top_pods` / `top_nodes` for resource exhaustion (OOMKilled, high CPU,
-            MemoryPressure).
-            - `rollout_status` to check whether a Deployment rollout has completed.
-
-            As soon as you can answer the query, stop calling tools and reply directly.
-            If you were asked to diagnose a problem, give a concise root cause, the
-            evidence you found, and a suggested fix.
+            General investigation strategy:
+            - Start broad (discovery/state tools) before narrow (logs/events for one
+            resource) unless the query already names a specific resource.
+            - Prefer tools that explain WHY something happened (get_events) over tools
+            that only show WHAT the current state is (get_resource) when you're
+            trying to find a root cause, not just confirm a symptom.
+            - A tool returning "healthy"/"ready"/"complete" is not proof the underlying
+            problem is solved — cross-check with a second, independent tool before
+            concluding an area is not the cause. (e.g. ready endpoints doesn't
+            guarantee network reachability; a completed rollout doesn't guarantee
+            the new version is functionally correct.)
+            - If evidence points to a policy or governance object (quota, limit range,
+            network policy, RBAC) rather than the workload itself, verify by
+            inspecting that object directly rather than assuming from indirect symptoms.
+            - For node health specifically, use `get_node_conditions` to check conditions
+            (Ready, DiskPressure, MemoryPressure, PIDPressure, NetworkUnavailable), taints,
+            and capacity vs. allocatable — this is the dedicated tool for diagnosing
+            scheduling or eviction problems caused by node state, and is more direct than
+            `top_nodes` (which only shows CPU/memory usage numbers, not conditions or
+            taints). `get_resource` and `describe_resource` also work on cluster-scoped
+            kinds like Node — they are not restricted to namespaced workload objects.
+            - Stop investigating once you have a root cause backed by direct evidence
+            from at least one tool call — do not keep calling tools "to be thorough"
+            once the cause is established.
+            - If two tools give apparently conflicting information, investigate the
+            discrepancy before concluding — don't silently pick whichever result
+            came first.
         """
         self.graph = self._build_graph()
 

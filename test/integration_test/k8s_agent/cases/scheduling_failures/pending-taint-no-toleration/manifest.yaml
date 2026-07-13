@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Node
+metadata:
+  name: kind-control-plane
+spec:
+  taints:
+    - key: scenario.kubernaut.io/dedicated
+      value: "true"
+      effect: NoSchedule
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-app
+  labels:
+    app: sample-app
+spec:
+  containers:
+    - name: app
+      image: nginx:latest

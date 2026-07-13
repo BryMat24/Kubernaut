@@ -1,0 +1,14 @@
+{
+  "scenario_id": "pending-taint-no-toleration",
+  "expected_root_cause": "The node kind-control-plane has a NoSchedule taint (scenario.kubernaut.io/dedicated=true:NoSchedule) and the pod does not have a matching toleration, so the scheduler refuses to place it there and it stays Pending.",
+  "key_evidence": [
+    "A FailedScheduling event on the pod mentioning the taint or 'node(s) had untolerated taint'",
+    "The node's taints field (from get_node_conditions) showing the scenario.kubernaut.io/dedicated NoSchedule taint",
+    "The pod spec has no matching toleration"
+  ],
+  "should_not_conclude": [
+    "Insufficient CPU or memory",
+    "Image pull failure",
+    "A nodeSelector or affinity mismatch"
+  ]
+}
