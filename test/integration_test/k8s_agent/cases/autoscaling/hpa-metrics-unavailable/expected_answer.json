@@ -1,0 +1,13 @@
+{
+  "scenario_id": "hpa-metrics-unavailable",
+  "expected_root_cause": "The HorizontalPodAutoscaler sample-app-hpa cannot compute CPU utilization because the target Deployment's container has no CPU resource request set. HPA requires a CPU request on the target to calculate a utilization percentage, so its current metric value is unknown/missing and it cannot scale, even though the cluster's metrics pipeline itself is otherwise healthy.",
+  "key_evidence": [
+    "get_resource(kind=HORIZONTALPODAUTOSCALER) shows an unknown or missing current CPU metric, or a condition indicating it could not compute the resource metric (e.g. missing request for cpu)",
+    "get_resource(kind=DEPLOYMENT) shows the container has no resources.requests.cpu set"
+  ],
+  "should_not_conclude": [
+    "The Deployment is unhealthy or crashlooping",
+    "The cluster's metrics-server is down or uninstalled",
+    "Insufficient node resources"
+  ]
+}
