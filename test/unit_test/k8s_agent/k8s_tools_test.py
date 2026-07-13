@@ -194,6 +194,53 @@ def test_list_resources_cluster_scoped_kind_omits_namespace_flag(mock_run):
     )
 
 
+def test_list_resources_with_label_selector(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "items": [{"metadata": {"name": "api", "labels": {"app": "my-service"}}}],
+    }))
+
+    result = k8s_tools.list_resources(ResourceKind.POD, "default", label_selector="app=my-service")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "pod", "-n", "default", "-l", "app=my-service", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result == [{"metadata": {"name": "api", "labels": {"app": "my-service"}}}]
+
+
+def test_list_resources_without_label_selector_omits_l_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"items": []}))
+
+    k8s_tools.list_resources(ResourceKind.POD, "default")
+
+    cmd = mock_run.call_args.args[0]
+    assert "-l" not in cmd
+
+
+def test_list_resources_empty_label_selector_omits_l_flag(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"items": []}))
+
+    k8s_tools.list_resources(ResourceKind.POD, "default", label_selector="")
+
+    cmd = mock_run.call_args.args[0]
+    assert "-l" not in cmd
+
+
+def test_list_resources_label_selector_with_cluster_scoped_kind(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({"items": []}))
+
+    k8s_tools.list_resources(ResourceKind.STORAGECLASS, "default", label_selector="tier=fast")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "storageclass", "-l", "tier=fast", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 # ------------------------------------------------------------------
 # describe_resource
 # ------------------------------------------------------------------
@@ -459,6 +506,89 @@ def test_top_nodes_failure_propagates(mock_run):
     mock_run.side_effect = subprocess.CalledProcessError(1, ["kubectl"])
     with pytest.raises(subprocess.CalledProcessError):
         k8s_tools.top_nodes()
+
+
+# ------------------------------------------------------------------
+# get_node_conditions
+# ------------------------------------------------------------------
+
+def test_get_node_conditions_success(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "spec": {
+            "taints": [
+                {"key": "node.kubernetes.io/unschedulable", "effect": "NoSchedule"},
+            ],
+        },
+        "status": {
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": "True",
+                    "reason": "KubeletReady",
+                    "message": "kubelet is posting ready status",
+                    "lastTransitionTime": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "type": "DiskPressure",
+                    "status": "False",
+                    "reason": "KubeletHasNoDiskPressure",
+                    "message": "kubelet has no disk pressure",
+                    "lastTransitionTime": "2026-01-01T00:00:00Z",
+                },
+            ],
+            "capacity": {"cpu": "4", "memory": "16336792Ki", "pods": "110"},
+            "allocatable": {"cpu": "3800m", "memory": "15000000Ki", "pods": "110"},
+        },
+    }))
+
+    result = k8s_tools.get_node_conditions("my-node")
+
+    mock_run.assert_called_once_with(
+        ["kubectl", "get", "node", "my-node", "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result == {
+        "name": "my-node",
+        "conditions": [
+            {
+                "type": "Ready",
+                "status": "True",
+                "reason": "KubeletReady",
+                "message": "kubelet is posting ready status",
+                "last_transition_time": "2026-01-01T00:00:00Z",
+            },
+            {
+                "type": "DiskPressure",
+                "status": "False",
+                "reason": "KubeletHasNoDiskPressure",
+                "message": "kubelet has no disk pressure",
+                "last_transition_time": "2026-01-01T00:00:00Z",
+            },
+        ],
+        "taints": [{"key": "node.kubernetes.io/unschedulable", "effect": "NoSchedule"}],
+        "capacity": {"cpu": "4", "memory": "16336792Ki", "pods": "110"},
+        "allocatable": {"cpu": "3800m", "memory": "15000000Ki", "pods": "110"},
+    }
+
+
+def test_get_node_conditions_no_taints(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "spec": {},
+        "status": {"conditions": [], "capacity": {}, "allocatable": {}},
+    }))
+
+    result = k8s_tools.get_node_conditions("my-node")
+
+    assert result["taints"] == []
+    assert result["conditions"] == []
+
+
+def test_get_node_conditions_failure_propagates(mock_run):
+    mock_run.side_effect = subprocess.CalledProcessError(1, ["kubectl"])
+    with pytest.raises(subprocess.CalledProcessError):
+        k8s_tools.get_node_conditions("missing-node")
 
 
 # ------------------------------------------------------------------

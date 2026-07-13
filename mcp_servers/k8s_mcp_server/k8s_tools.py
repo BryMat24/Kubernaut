@@ -132,11 +132,13 @@ def get_resource(
 def list_resources(
     kind: Annotated[ResourceKind, "Kubernetes resource type."],
     namespace: Annotated[str, "Namespace to search. Pass an empty string to search all namespaces."] = "default",
+    label_selector: Annotated[str | None, "Label selector to filter results, e.g. app=my-service."] = None,
 ) -> list[dict]:
     """
     List Kubernetes resources of a given kind, for discovery before inspecting individual resources.
 
     Example: kubectl get pod -n default -o json
+    Example (filtered by label): kubectl get pod -n default -l app=my-service -o json
 
     Use when: you know the kind but not the exact resource name yet — e.g. finding which pods
     exist in a namespace before drilling into one with get_resource or describe_resource.
@@ -147,6 +149,8 @@ def list_resources(
     cmd = ["kubectl", "get", kind.value]
     if kind not in _CLUSTER_SCOPED_KINDS:
         cmd.extend(["-n", namespace])
+    if label_selector:
+        cmd.extend(["-l", label_selector])
     cmd.extend(["-o", "json"])
 
     result = subprocess.run(
@@ -393,6 +397,51 @@ def top_nodes() -> list[dict]:
         })
 
     return nodes
+
+
+# NODE HEALTH
+@mcp.tool
+def get_node_conditions(
+    name: Annotated[str, "Name of the Node."],
+) -> dict:
+    """
+    Retrieve a Node's conditions, taints, and capacity vs. allocatable resources.
+
+    Example: kubectl get node my-node -o json
+
+    Use when: diagnosing why a pod is stuck Pending or a workload isn't scheduling —
+    checks the specific fields that block scheduling (NoSchedule/NoExecute taints,
+    DiskPressure/MemoryPressure/PIDPressure conditions, insufficient allocatable resources)
+    without wading through describe_resource's dense mixed text output (pod list, events,
+    conditions, capacity all together). Node is cluster-scoped, so there's no namespace
+    parameter.
+    """
+    result = subprocess.run(
+        ["kubectl", "get", "node", name, "-o", "json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    data = json.loads(result.stdout)
+    status = data.get("status", {})
+
+    return {
+        "name": name,
+        "conditions": [
+            {
+                "type": c.get("type"),
+                "status": c.get("status"),
+                "reason": c.get("reason"),
+                "message": c.get("message"),
+                "last_transition_time": c.get("lastTransitionTime"),
+            }
+            for c in status.get("conditions", [])
+        ],
+        "taints": data.get("spec", {}).get("taints", []),
+        "capacity": status.get("capacity", {}),
+        "allocatable": status.get("allocatable", {}),
+    }
 
 
 # rollout status
