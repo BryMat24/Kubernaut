@@ -15,85 +15,84 @@ An autonomous (human-gated) SRE agent for Kubernetes that answers questions, dia
 
 ```mermaid
 flowchart TB
-    subgraph Ingress["Ingress (chat only)"]
-        Chat["Chat: Slack / CLI"]
+    subgraph ENTRY["Entry points"]
+        WEBHOOK[Alertmanager webhook]
+        CHAT[Chat / CLI]
     end
 
-    subgraph Gateway["API Server"]
-        API["FastAPI + LangServe"]
+    WEBHOOK --> SUP
+    CHAT --> SUP
+
+    subgraph AGENT_POD["diagnosis-agent pod — monolith, one LangGraph process"]
+        direction TB
+
+        subgraph SUP_LOOP["Supervisor — own reasoning loop"]
+            SUP[Reasoning node]
+            SUP -->|calls sub-agent as tool| DISPATCH{Which agent?}
+        end
+
+        DISPATCH -->|scheduling, crash,<br/>resource state| K8S_AGENT
+        DISPATCH -->|latency, error rate,<br/>resource trend| OBS_AGENT
+        DISPATCH -->|recent change,<br/>deploy correlation| GITOPS_AGENT
+
+        K8S_AGENT -->|findings| SUP
+        OBS_AGENT -->|findings| SUP
+        GITOPS_AGENT -->|findings| SUP
+
+        SUP -->|enough evidence,<br/>root cause established| REMED_GATE{Remediate?}
+        REMED_GATE -->|yes| REMED_AGENT
+        REMED_GATE -->|diagnosis only| DONE([Report to user])
+
+        subgraph K8S_AGENT["K8s Agent — read-only"]
+            K8S_LOOP[reasoning loop]
+        end
+
+        subgraph OBS_AGENT["Observability Agent — read-only"]
+            OBS_LOOP[reasoning loop]
+        end
+
+        subgraph GITOPS_AGENT["GitOps Investigation Agent — read-only"]
+            GI_LOOP[reasoning loop:<br/>recent commits, ArgoCD sync,<br/>deployment history]
+        end
+
+        subgraph REMED_AGENT["Remediation Agent — write-capable"]
+            RD[Draft fix<br/>local coding tools]
+            RD --> RGATE[[HITL interrupt]]
+            RGATE -->|approved| RE[Execute: commit + PR]
+            RGATE -->|rejected| RR[Return, no mutation]
+        end
+
+        REMED_AGENT -->|PR link / rejection| DONE2([Report to user])
+
+        CHECKPOINT[(Checkpointer<br/>short-term memory<br/>+ HITL resume state)]
+        VECTOR[(Vector store<br/>long-term memory<br/>runbooks, past incidents)]
+
+        SUP -.-> CHECKPOINT
+        RGATE -.-> CHECKPOINT
+        K8S_LOOP -.retrieval.-> VECTOR
+        OBS_LOOP -.retrieval.-> VECTOR
+        RD -.local tools.-> CODING[coding_tools.py<br/>list/read/grep/edit files]
     end
 
-    subgraph Orchestrator["LangGraph Supervisor"]
-        Router["Intent Router"]
-        HITL{"HITL Approval Gate"}
+    K8S_LOOP -->|MCP, streamable_http| K8S_MCP
+    OBS_LOOP -->|MCP| PROM_MCP
+    OBS_LOOP -->|MCP| LOKI_MCP
+    GI_LOOP -->|MCP| GH_READ_MCP
+    RE -->|MCP| GH_WRITE_MCP
+
+    subgraph MCP_TIER["MCP servers — separate pods, scoped RBAC"]
+        K8S_MCP[k8s-mcp-server<br/>read-only ServiceAccount]
+        PROM_MCP[prometheus-mcp-server]
+        LOKI_MCP[loki-mcp-server]
+        GH_READ_MCP[github-mcp-server<br/>read: commits, ArgoCD status]
+        GH_WRITE_MCP[github-mcp-server<br/>write: branch, commit, PR]
     end
 
-    QA["Query Agent (read-only)"]
-
-    subgraph DiagFlow["Diagnosis"]
-        Evidence["Evidence Collector<br/>pods / events / logs / metrics"]
-        Diag["Diagnosis Agent (RCA)"]
-    end
-
-    Planner["Remediation Planner<br/>(gitops fix only)"]
-
-    subgraph CodeFlow["GitOps Coding Agent (ephemeral K8s Job)"]
-        Coder["Coding Agent<br/>edit manifests"]
-        Validate{"Validate:<br/>kubeconform / kustomize"}
-        MaxIter{"Max iterations?"}
-        PR["Open / Update PR"]
-    end
-
-    subgraph MCP["Tool Layer"]
-        K8sMCP["Kubernetes<br/>(read verbs + logs)"]
-        PromMCP["Prometheus<br/>(metrics)"]
-        GHMCP["GitHub<br/>(no cluster creds)"]
-    end
-
-    subgraph State["State & Observability"]
-        CP["Postgres Checkpointer"]
-        Trace["LangSmith Tracing"]
-    end
-
-    subgraph Ext["External"]
-        K8s["Kubernetes API"]
-        Prom["Prometheus"]
-        GH["GitHub Manifests Repo"]
-        CD["Argo CD / Flux"]
-    end
-
-    Chat --> API --> Router
-    Router -->|informational| QA
-    Router -->|issue detected| Evidence
-
-    QA --> K8sMCP
-    QA -->|answer| API
-
-    Evidence --> K8sMCP
-    Evidence --> PromMCP
-    Evidence --> Diag
-    Diag -->|RCA + evidence| Planner
-
-    Planner -->|gitops fix needed| HITL
-    Planner -->|no action / info| API
-    HITL -->|approved| Coder
-    HITL -->|rejected| API
-
-    Coder --> GHMCP
-    Coder --> Validate
-    Validate -->|fail| MaxIter
-    MaxIter -->|no: retry with errors| Coder
-    MaxIter -->|yes: escalate to human| API
-    Validate -->|pass| PR --> GHMCP
-
-    K8sMCP --> K8s
-    PromMCP --> Prom
-    GHMCP --> GH --> CD --> K8s
-
-    Router -.state.-> CP
-    Coder -.state.-> CP
-    HITL -.interrupt/resume.-> CP
-    Orchestrator -.trace.-> Trace
+    K8S_MCP --> K8SAPI[(Kubernetes API)]
+    PROM_MCP --> PROM[(Prometheus)]
+    LOKI_MCP --> LOKI[(Loki)]
+    GH_READ_MCP --> GHUB[(GitHub / ArgoCD)]
+    GH_WRITE_MCP --> GHUB
 ```
 
 ---
