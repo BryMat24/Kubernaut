@@ -97,26 +97,7 @@ flowchart TB
 
 ---
 
-## 3. Deployment
-
-- Ship Kubernaut as an umbrella Helm chart deployed into a dedicated kubernaut-system namespace.
-
-```
-kubernaut/                      # umbrella chart
-├── charts/
-│   ├── orchestrator/           # API server + LangGraph app (Deployment)
-│   ├── mcp-kubernetes/         # Deployment + tight RBAC (read + gated write)
-│   ├── mcp-prometheus/         # Deployment (read-only)
-│   ├── mcp-loki/               # Deployment (read-only)
-│   ├── mcp-github/             # Deployment (no cluster RBAC; GitHub token only)
-│   └── postgres/               # checkpointer + audit (or external managed)
-└── values.yaml
-```
-
-- Each MCP deployed as seperate deployment for indpendent scaling, RBAC and blast radius
-- Gitops coding agent is deployed as an ephemeral job deployed by the orchestrator per run
-
-## 4. Tech Stack Summary
+## 3. Tech Stack Summary
 
 | Layer             | Choice                                                                           |
 | ----------------- | -------------------------------------------------------------------------------- |
