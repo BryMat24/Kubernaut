@@ -50,6 +50,9 @@ curl-based checklist covering default healthy behavior and every fault mode. No 
 pytest suite exists for `test_app/` — these are test fixtures, not application code under
 this repo's own test coverage.
 
+The full 3-hop cascading-failure check (crashing `cache` and confirming the failure surfaces
+as a 502 at `frontend`) has been verified manually per this README's build instructions.
+
 ## Scope
 
 No `cases/*` scenario directories, Kubernetes manifests, or `k8s_agent` integration tests
