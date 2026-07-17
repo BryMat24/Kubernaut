@@ -1,13 +1,16 @@
 """
-Category 7 (Rollout-specific) integration tests for KubernetesAgent, per PLAN.json.
+Category 6 (RBAC / cluster-scoped resources) integration tests for DiagnosisAgent, per
+PLAN.json.
 
 These run against a real, live Kubernetes cluster (kubectl's current context) and make
 real LLM calls -- they are not part of the default `pytest test/` run. Run explicitly with:
 
-    pytest test/integration_test/k8s_agent/test_rollout_failure.py -m integration
+    pytest test/integration_test/k8s_agent/test_rbac.py -m integration
 
-rollout-stuck-new-rs-failing is intentionally not covered here: PLAN.json marks it priority
-"skip" (documented gap only, no test built for the 2-3 week timeline).
+rbac-forbidden-in-app is priority "eval+unit" in PLAN.json: this file is the eval half.
+The unit half (verifying get_resource/describe_resource correctly omit the namespace flag
+for cluster-scoped kinds like CLUSTERROLEBINDING) lives in
+test/unit_test/k8s_agent/k8s_tools_test.py.
 """
 import asyncio
 import json
@@ -20,8 +23,8 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-from agents import KubernetesAgent
-from evaluator import ScenarioEvaluator
+from agents import DiagnosisAgent
+from agents import ScenarioEvaluator
 from langchain_openrouter import ChatOpenRouter
 from mcp_clients.k8s_client import get_mcp_tools
 
@@ -29,7 +32,7 @@ load_dotenv()
 
 pytestmark = pytest.mark.integration
 
-CASES_DIR = Path(__file__).parent / "cases" / "rollout_failures"
+CASES_DIR = Path(__file__).parent / "cases" / "rbac"
 MCP_SERVER_DIR = Path(__file__).parents[3] / "mcp_servers" / "k8s_mcp_server"
 
 
@@ -87,14 +90,14 @@ def mcp_server():
 
 @pytest.fixture(scope="session")
 def kubernetes_agent(mcp_server):
-    async def _build() -> KubernetesAgent:
+    async def _build() -> DiagnosisAgent:
         llm = ChatOpenRouter(
             model="qwen/qwen3-coder-next",
             temperature=0.1,
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
         tools = await get_mcp_tools()
-        return KubernetesAgent(llm, tools)
+        return DiagnosisAgent(llm, tools)
 
     return asyncio.run(_build())
 
@@ -110,10 +113,10 @@ def judge() -> ScenarioEvaluator:
 
 
 @pytest.fixture
-def rollout_complete_but_broken_scenario():
-    namespace = "test-rollout-complete-but-broken"
+def rbac_forbidden_in_app_scenario():
+    namespace = "test-rbac-forbidden-in-app"
     _kubectl("create", "namespace", namespace)
-    _apply_manifest("rollout-complete-but-broken", namespace)
+    _apply_manifest("rbac-forbidden-in-app", namespace)
     try:
         yield namespace
     finally:
@@ -121,8 +124,8 @@ def rollout_complete_but_broken_scenario():
 
 
 @pytest.mark.anyio
-async def test_rollout_complete_but_broken(kubernetes_agent, judge, rollout_complete_but_broken_scenario):
-    namespace = rollout_complete_but_broken_scenario
+async def test_rbac_forbidden_in_app(kubernetes_agent, judge, rbac_forbidden_in_app_scenario):
+    namespace = rbac_forbidden_in_app_scenario
     result = await kubernetes_agent.ainvoke({
         "messages": [],
         "query": f"The workload sample-app in namespace {namespace} is not working as expected. Diagnose the root cause.",
@@ -130,7 +133,7 @@ async def test_rollout_complete_but_broken(kubernetes_agent, judge, rollout_comp
     })
     diagnosis = result["messages"][-1].content
 
-    expected = _load_expected_answer("rollout-complete-but-broken")
+    expected = _load_expected_answer("rbac-forbidden-in-app")
     verdict = judge.evaluate(expected, diagnosis)
     assert verdict.correct, (
         f"{verdict.reasoning}\nmissing_evidence={verdict.missing_evidence}\n\ndiagnosis was:\n{diagnosis}"

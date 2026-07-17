@@ -1,5 +1,5 @@
 """
-Category 1 (Scheduling failures) integration tests for KubernetesAgent, per PLAN.json.
+Category 1 (Scheduling failures) integration tests for DiagnosisAgent, per PLAN.json.
 
 These run against a real, live Kubernetes cluster (kubectl's current context) and make
 real LLM calls -- they are not part of the default `pytest test/` run. Run explicitly with:
@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-from agents import KubernetesAgent
-from evaluator import ScenarioEvaluator
+from agents import DiagnosisAgent
+from agents import ScenarioEvaluator
 from langchain_openrouter import ChatOpenRouter
 from mcp_clients.k8s_client import get_mcp_tools
 
@@ -89,14 +89,14 @@ def mcp_server():
 
 @pytest.fixture(scope="session")
 def kubernetes_agent(mcp_server):
-    async def _build() -> KubernetesAgent:
+    async def _build() -> DiagnosisAgent:
         llm = ChatOpenRouter(
             model="qwen/qwen3-coder-next",
             temperature=0.1,
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
         tools = await get_mcp_tools()
-        return KubernetesAgent(llm, tools)
+        return DiagnosisAgent(llm, tools)
 
     return asyncio.run(_build())
 
