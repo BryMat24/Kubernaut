@@ -8,3 +8,7 @@ from .git_utils import (
     remove_task_worktree,
     repo_lock,
 )
+
+from .llm_factory_utils import (
+    create_llm_model
+)
