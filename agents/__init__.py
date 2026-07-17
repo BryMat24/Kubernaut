@@ -1,2 +1,2 @@
 from .remediation_agent import RemediationAgent
-from .kubernetes_agent import KubernetesAgent
+from .diagnosis_agent import DiagnosisAgent

@@ -1,8 +1,8 @@
 import asyncio
 import os
 
-from agents import KubernetesAgent
-from mcp_clients.k8s_client import get_mcp_tools
+from agents import DiagnosisAgent
+from mcp_clients import get_k8s_mcp_tools, get_promql_mcp_tools
 from langchain_openrouter import ChatOpenRouter
 from dotenv import load_dotenv
 
@@ -15,10 +15,11 @@ async def main() -> None:
         api_key=os.getenv("OPENROUTER_API_KEY")
     )
 
-    tools = await get_mcp_tools()
+    k8s_tools = await get_k8s_mcp_tools()
+    promql_tools = await get_promql_mcp_tools()
 
-    kubernetes_agent = KubernetesAgent(llm, tools)
-    result = await kubernetes_agent.ainvoke({
+    diagnosis_agent = DiagnosisAgent(llm, k8s_tools + promql_tools)
+    result = await diagnosis_agent.ainvoke({
         "messages": [],
         "query": "What is the rollout status of the deployment in the default namespace",
         "iteration_count": 0

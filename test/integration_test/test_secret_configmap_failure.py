@@ -1,14 +1,11 @@
 """
-Category 2 (Storage failures) integration tests for KubernetesAgent, per PLAN.json.
+Category 8 (Secret / ConfigMap edge cases) integration tests for DiagnosisAgent, per
+PLAN.json.
 
 These run against a real, live Kubernetes cluster (kubectl's current context) and make
 real LLM calls -- they are not part of the default `pytest test/` run. Run explicitly with:
 
-    pytest test/integration_test/k8s_agent/test_storage_failure.py -m integration
-
-volume-mount-wrong-access-mode and statefulset-pvc-bad-storageclass are intentionally not
-covered here: PLAN.json marks both priority "skip" (documented gap only, no test built for
-the 2-3 week timeline).
+    pytest test/integration_test/k8s_agent/test_secret_configmap_failure.py -m integration
 """
 import asyncio
 import json
@@ -21,7 +18,7 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-from agents import KubernetesAgent
+from agents import DiagnosisAgent
 from evaluator import ScenarioEvaluator
 from langchain_openrouter import ChatOpenRouter
 from mcp_clients.k8s_client import get_mcp_tools
@@ -30,7 +27,7 @@ load_dotenv()
 
 pytestmark = pytest.mark.integration
 
-CASES_DIR = Path(__file__).parent / "cases" / "storage_failures"
+CASES_DIR = Path(__file__).parent / "cases" / "secret_configmap_failures"
 MCP_SERVER_DIR = Path(__file__).parents[3] / "mcp_servers" / "k8s_mcp_server"
 
 
@@ -88,14 +85,14 @@ def mcp_server():
 
 @pytest.fixture(scope="session")
 def kubernetes_agent(mcp_server):
-    async def _build() -> KubernetesAgent:
+    async def _build() -> DiagnosisAgent:
         llm = ChatOpenRouter(
             model="qwen/qwen3-coder-next",
             temperature=0.1,
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
         tools = await get_mcp_tools()
-        return KubernetesAgent(llm, tools)
+        return DiagnosisAgent(llm, tools)
 
     return asyncio.run(_build())
 
@@ -111,10 +108,10 @@ def judge() -> ScenarioEvaluator:
 
 
 @pytest.fixture
-def pvc_pending_no_storageclass_scenario():
-    namespace = "test-pvc-pending-no-storageclass"
+def secret_wrong_key_reference_scenario():
+    namespace = "test-secret-wrong-key-reference"
     _kubectl("create", "namespace", namespace)
-    _apply_manifest("pvc-pending-no-storageclass", namespace)
+    _apply_manifest("secret-wrong-key-reference", namespace)
     try:
         yield namespace
     finally:
@@ -122,8 +119,8 @@ def pvc_pending_no_storageclass_scenario():
 
 
 @pytest.mark.anyio
-async def test_pvc_pending_no_storageclass(kubernetes_agent, judge, pvc_pending_no_storageclass_scenario):
-    namespace = pvc_pending_no_storageclass_scenario
+async def test_secret_wrong_key_reference(kubernetes_agent, judge, secret_wrong_key_reference_scenario):
+    namespace = secret_wrong_key_reference_scenario
     result = await kubernetes_agent.ainvoke({
         "messages": [],
         "query": f"The workload sample-app in namespace {namespace} is not working as expected. Diagnose the root cause.",
@@ -131,7 +128,7 @@ async def test_pvc_pending_no_storageclass(kubernetes_agent, judge, pvc_pending_
     })
     diagnosis = result["messages"][-1].content
 
-    expected = _load_expected_answer("pvc-pending-no-storageclass")
+    expected = _load_expected_answer("secret-wrong-key-reference")
     verdict = judge.evaluate(expected, diagnosis)
     assert verdict.correct, (
         f"{verdict.reasoning}\nmissing_evidence={verdict.missing_evidence}\n\ndiagnosis was:\n{diagnosis}"

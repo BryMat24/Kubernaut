@@ -13,19 +13,19 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-class KubernetesAgentState(MessagesState):
+class DiagnosisAgentState(MessagesState):
     query: str
     iteration_count: int
 
-class KubernetesAgent:
+class DiagnosisAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool]) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
-        self.logger = logging.getLogger("kubernetesAgent")
+        self.logger = logging.getLogger("diagnosisAgent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""
-            You are a Kubernetes diagnosis agent. You are read-only: you never modify
-            cluster state, only inspect it.
+            You are a Kubernetes and observability diagnosis agent. You are read-only:
+            you never modify cluster state or metrics, only inspect them.
 
             Answer only the user's query below. Call the minimum number of tools needed
             to answer it, and no more — do not run a full investigation unless the query
@@ -34,8 +34,8 @@ class KubernetesAgent:
             deployments, pods, events, logs, or rollout checks unless the query or the
             evidence you've gathered so far calls for it.
 
-            Available tools — this is the complete list, there is no shell or kubectl
-            access beyond these: {", ".join(t.name for t in tools)}.
+            Available tools — this is the complete list, there is no direct cluster,
+            shell, or metrics-backend access beyond these: {", ".join(t.name for t in tools)}.
 
             General investigation strategy:
             - Start broad (discovery/state tools) before narrow (logs/events for one
@@ -43,6 +43,13 @@ class KubernetesAgent:
             - Prefer tools that explain WHY something happened (get_events) over tools
             that only show WHAT the current state is (get_resource) when you're
             trying to find a root cause, not just confirm a symptom.
+            - When both Kubernetes state tools and observability/metrics tools (e.g.
+            error rate, latency, OOM indicators, restart counts, CPU throttling) are
+            available, cross-correlate them: use metrics to detect an anomaly and
+            narrow down the affected app/pod/namespace, then use Kubernetes tools to
+            confirm the underlying resource state or event trail behind it. Don't
+            conclude from metrics alone if a corresponding Kubernetes-side tool can
+            confirm the cause.
             - A tool returning "healthy"/"ready"/"complete" is not proof the underlying
             problem is solved — cross-check with a second, independent tool before
             concluding an area is not the cause. (e.g. ready endpoints doesn't
@@ -85,7 +92,7 @@ class KubernetesAgent:
     def _build_graph(self) -> CompiledStateGraph:
         self._tool_executor = ToolNode(self.tools)
 
-        graph = StateGraph(state_schema=KubernetesAgentState)
+        graph = StateGraph(state_schema=DiagnosisAgentState)
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
 
@@ -98,7 +105,7 @@ class KubernetesAgent:
         graph.add_edge("tool_node", "reasoning_node")
         return graph.compile()
 
-    def _reasoning_node(self, state: KubernetesAgentState) -> dict[str, Any]:
+    def _reasoning_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
@@ -116,13 +123,13 @@ class KubernetesAgent:
             "iteration_count": iteration,
         }
     
-    async def _tool_node(self, state: KubernetesAgentState) -> dict[str, Any]:
+    async def _tool_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
         result = await self._tool_executor.ainvoke(state)
         for msg in result["messages"]:
             self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result
 
-    def _tool_routing(self, state: KubernetesAgentState) -> Literal["tool_node", "end"]:
+    def _tool_routing(self, state: DiagnosisAgentState) -> Literal["tool_node", "end"]:
         if state.get("iteration_count", 0) >= self.MAX_ITERATIONS:
             self.logger.info(f"  hit MAX_ITERATIONS ({self.MAX_ITERATIONS}), stopping")
             return "end"
@@ -137,8 +144,8 @@ class KubernetesAgent:
         text = str(text)
         return text if len(text) <= limit else text[:limit] + "... [truncated]"
 
-    def invoke(self, state: KubernetesAgentState):
+    def invoke(self, state: DiagnosisAgentState):
         return self.graph.invoke(state)
 
-    async def ainvoke(self, state: KubernetesAgentState):
+    async def ainvoke(self, state: DiagnosisAgentState):
         return await self.graph.ainvoke(state)
