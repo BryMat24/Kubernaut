@@ -8,5 +8,5 @@ app = FastMCP("prometheus-mcp-server")
 app.mount(promql_tools_server)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8081"))
     app.run(transport="http", host="0.0.0.0", port=port)

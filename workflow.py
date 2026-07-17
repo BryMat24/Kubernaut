@@ -21,7 +21,7 @@ async def main() -> None:
     diagnosis_agent = DiagnosisAgent(llm, k8s_tools + promql_tools)
     result = await diagnosis_agent.ainvoke({
         "messages": [],
-        "query": "What is the rollout status of the deployment in the default namespace",
+        "query": "Why my application in dev namespace stopped working",
         "iteration_count": 0
     })
 

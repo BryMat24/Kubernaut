@@ -21,7 +21,7 @@ import pytest
 from dotenv import load_dotenv
 
 from agents import DiagnosisAgent
-from evaluator import ScenarioEvaluator
+from agents import ScenarioEvaluator
 from langchain_openrouter import ChatOpenRouter
 from mcp_clients.k8s_client import get_mcp_tools
 

@@ -15,7 +15,7 @@ from utils import (
     remove_task_worktree,
     repo_lock,
 )
-from evaluator import DiffEvaluator
+from .judge import DiffEvaluator
 import logging
 import yaml
 import json
