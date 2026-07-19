@@ -172,7 +172,7 @@ class DiagnosisAgent:
             return {"diagnosis_result": parsed}
     
     @staticmethod
-    def _preview(text: Any, limit: int = 300) -> str:
+    def _preview(text: Any, limit: int = 500) -> str:
         text = str(text)
         return text if len(text) <= limit else text[:limit] + "... [truncated]"
 

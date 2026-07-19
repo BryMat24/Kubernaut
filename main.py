@@ -14,7 +14,7 @@ async def test_diagnosis():
         "query": "what the application in the dev namespace is not working?",
         "iteration_count": 0,
     })
-    print(result["messages"][-1])
+    print(result)
 
 if __name__ == "__main__":
     asyncio.run(test_diagnosis())
