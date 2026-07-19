@@ -1,7 +1,7 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, AIMessage
 from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from typing import Any, Literal
@@ -16,6 +16,7 @@ from utils import (
     repo_lock,
 )
 from .judge import DiffEvaluator
+from graph.state import RemediationAgentState
 import logging
 import yaml
 import json
@@ -24,18 +25,6 @@ import uuid
 import os
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-class RemediationAgentState(MessagesState):
-    task: str # provided by caller
-    iteration_count: int
-    eval_passed: bool
-    eval_reasoning: str
-    pr_url: str
-
-    repo_url: str       # provided by the caller, e.g. from frontend input
-    bare_path: str       # set by _setup_node: shared bare clone for repo_url
-    repo_path: str       # set by _setup_node: this task's worktree
-    branch: str          # set by _setup_node: branch created for this task's worktree
 
 class RemediationAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool], llm_judge: BaseChatModel) -> None:

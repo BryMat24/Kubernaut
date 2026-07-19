@@ -2,20 +2,18 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from typing import Any, Literal
 import logging
 from dotenv import load_dotenv
 
+from graph.state import DiagnosisAgentState
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-class DiagnosisAgentState(MessagesState):
-    query: str
-    iteration_count: int
 
 class DiagnosisAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool]) -> None:
