@@ -1071,9 +1071,9 @@ async def main():
     with patch.object(builder, 'init_diagnosis_agent', new=AsyncMock(return_value=object())), \
          patch.object(builder, 'init_planner_agent', new=AsyncMock(return_value=object())), \
          patch.object(builder, 'init_remediation_agent', new=AsyncMock(return_value=object())), \
-         patch('graph.nodes.make_diagnose_node', return_value=lambda state: {}), \
-         patch('graph.nodes.make_planner_node', return_value=lambda state: {}), \
-         patch('graph.nodes.make_remediate_node', return_value=lambda state: {}):
+         patch.object(builder, 'make_diagnose_node', return_value=lambda state: {}), \
+         patch.object(builder, 'make_planner_node', return_value=lambda state: {}), \
+         patch.object(builder, 'make_remediate_node', return_value=lambda state: {}):
         compiled = await builder.build_graph()
         nodes = set(compiled.get_graph().nodes.keys())
         print('planner_agent in graph:', 'planner_agent' in nodes)
