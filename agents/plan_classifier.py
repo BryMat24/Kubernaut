@@ -30,8 +30,11 @@ class PlanClassifier:
         parsed = response["parsed"]
         if parsed is None:
             raw_content = response["raw"].content
+            fallback_summary = raw_content or "Planner agent did not return a structured result."
             return RemediationPlan(
-                summary=raw_content or "Planner agent did not return a structured result.",
+                summary=(
+                    f"{fallback_summary}\n\nDiagnosed issue: {diagnosis_result.summary}{root_cause_line}"
+                ),
                 steps=[],
                 planning_success=False,
             )

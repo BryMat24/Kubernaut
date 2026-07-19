@@ -11,6 +11,7 @@ from utils import (
     create_task_worktree,
     remove_task_worktree,
     repo_lock,
+    run,
 )
 from .plan_classifier import PlanClassifier
 from graph.state import PlannerAgentState
@@ -100,6 +101,11 @@ class PlannerAgent:
             self.logger.info(f"  removed worktree: {state['repo_path']}")
         except Exception as e:
             self.logger.info(f"  failed to remove worktree: {e}")
+        try:
+            run(["git", "branch", "-D", state["branch"]], state["bare_path"])
+            self.logger.info(f"  deleted branch: {state['branch']}")
+        except Exception as e:
+            self.logger.info(f"  failed to delete branch: {e}")
         return {}
 
     def _reasoning_node(self, state: PlannerAgentState) -> dict[str, Any]:
@@ -151,10 +157,15 @@ class PlannerAgent:
                 f"  MAX_ITERATIONS ({self.MAX_ITERATIONS}) hit mid-investigation "
                 f"— forcing a failed plan instead of trusting partial results"
             )
+            diagnosis_result = state["diagnosis_result"]
+            root_cause_line = (
+                f"\n\nRoot cause: {diagnosis_result.root_cause}" if diagnosis_result.root_cause else ""
+            )
             parsed = RemediationPlan(
                 summary=(
                     "Investigation did not complete within the iteration budget "
-                    f"({self.MAX_ITERATIONS} steps). No concrete plan was produced."
+                    f"({self.MAX_ITERATIONS} steps). No concrete plan was produced.\n\n"
+                    f"Diagnosed issue: {diagnosis_result.summary}{root_cause_line}"
                 ),
                 steps=[],
                 planning_success=False,

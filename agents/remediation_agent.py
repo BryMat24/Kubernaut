@@ -46,6 +46,14 @@ class RemediationAgent:
             Available tools — this is the complete list, there is no shell, git, or terminal
             access, and no other tool exists: {", ".join(t.name for t in tools)}.
 
+            The task below may already be a concrete, file-by-file plan with exact file paths
+            and old_content/new_content for each step, produced by a prior investigation. When
+            it is, verify the current file content matches old_content before editing (per the
+            "never edit a file you haven't just read" rule below) and apply the specified change
+            directly rather than re-investigating from scratch. Only fall back to the full
+            find/grep-based investigation workflow below when the task is a vague diagnosis
+            without concrete file-level detail.
+
             Workflow:
             0. use read_file_content on AGENT.md file which gives information regarding repository
             and overall architecture
