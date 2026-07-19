@@ -719,11 +719,14 @@ Run:
 cd /Users/brymat24/repos/Kubernaut && source .venv/bin/activate && python3 -c "
 import asyncio
 from unittest.mock import patch
+from langchain_core.messages import AIMessage
 from agents.planner_agent import PlannerAgent
 from models import DiagnosisResult, RemediationPlan, RemediationStep
 
 class FakeLLM:
     def bind_tools(self, tools):
+        return self
+    def with_structured_output(self, model, include_raw=True):
         return self
 
 diagnosis = DiagnosisResult(summary='pod crashlooping', root_cause='OOMKilled', requires_remediation=True, diagnosis_success=True)
@@ -741,7 +744,7 @@ async def main():
             summary='ok', steps=[RemediationStep(step_number=1, file_path='a.yaml', description='d', new_content='x')], planning_success=True,
         ))
         # force straight to finalize: no tool_calls on the first reasoning response
-        agent.llm.invoke = lambda messages: type('R', (), {'content': 'done', 'tool_calls': []})()
+        agent.llm.invoke = lambda messages: AIMessage(content='done', tool_calls=[])
 
         result = await agent.ainvoke({
             'messages': [], 'diagnosis_result': diagnosis, 'iteration_count': 0,
