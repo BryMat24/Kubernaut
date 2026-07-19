@@ -25,8 +25,8 @@ def human_approval_node(state: OrchestratorState) -> dict:
     }
 
 
-def approval_routing(state: OrchestratorState) -> Literal["remediate_node", "end"]:
-    return "remediate_node" if state["approved"] else "end"
+def approval_routing(state: OrchestratorState) -> Literal["remediation_agent", "end"]:
+    return "remediation_agent" if state["approved"] else "end"
 
 
 def make_remediate_node(remediation_agent: RemediationAgent):

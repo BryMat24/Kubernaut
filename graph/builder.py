@@ -52,18 +52,18 @@ async def build_graph() -> CompiledStateGraph:
     remediation_agent = await init_remediation_agent()
 
     graph = StateGraph(state_schema=OrchestratorState)
-    graph.add_node("diagnose_node", make_diagnose_node(diagnosis_agent))
+    graph.add_node("diagnosis_agent", make_diagnose_node(diagnosis_agent))
     graph.add_node("human_approval_node", human_approval_node)
-    graph.add_node("remediate_node", make_remediate_node(remediation_agent))
+    graph.add_node("remediation_agent", make_remediate_node(remediation_agent))
 
-    graph.add_edge(START, "diagnose_node")
-    graph.add_edge("diagnose_node", "human_approval_node")
+    graph.add_edge(START, "diagnosis_agent")
+    graph.add_edge("diagnosis_agent", "human_approval_node")
     graph.add_conditional_edges(
         "human_approval_node",
         approval_routing,
-        {"remediate_node": "remediate_node", "end": END},
+        {"remediation_agent": "remediation_agent", "end": END},
     )
-    graph.add_edge("remediate_node", END)
+    graph.add_edge("remediation_agent", END)
 
     return graph.compile(checkpointer=MemorySaver())
 
