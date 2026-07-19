@@ -1,4 +1,4 @@
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 
 from models import DiagnosisResult
 
@@ -7,7 +7,7 @@ class Classifier:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(DiagnosisResult, include_raw=True)
 
-    async def classify(self, query: str, messages) -> DiagnosisResult:
+    async def classify(self, query: str, messages: list[BaseMessage]) -> DiagnosisResult:
         finalize_prompt = f"""
             Based on the investigation above, produce the final structured diagnosis for
             the query below.

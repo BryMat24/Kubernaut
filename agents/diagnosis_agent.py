@@ -86,6 +86,8 @@ class DiagnosisAgent:
             TooManyReplicas, and currentReplicas equal to maxReplicas, means
             autoscaling IS working correctly and is intentionally capped by
             configuration — that is not a malfunction.
+
+            Once the root cause is found, provide the explanation of the root cause
         """
         self.classifier = Classifier(llm)
         self.graph = self._build_graph()
@@ -165,7 +167,7 @@ class DiagnosisAgent:
             )
             return {"diagnosis_result": parsed}
         else:
-            parsed = await self.classifier.classify(state["query"], last_message)
+            parsed = await self.classifier.classify(state["query"], state["messages"])
             self.logger.info(f"  requires_remediation={parsed.requires_remediation} summary={self._preview(parsed.summary)}")
             return {"diagnosis_result": parsed}
     
