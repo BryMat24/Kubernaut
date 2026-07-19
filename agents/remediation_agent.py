@@ -17,7 +17,7 @@ from utils import (
 )
 from .judge import DiffEvaluator
 from graph.state import RemediationAgentState
-from models import DiagnosisResult
+from models import RemediationPlan
 import logging
 import yaml
 import json
@@ -110,7 +110,7 @@ class RemediationAgent:
 
     def _setup_node(self, state: RemediationAgentState) -> dict[str, Any]:
         self.logger.info("\n=== setup ===")
-        branch = f"agent/{slugify(self._task_description(state['diagnosis_result']))}-{uuid.uuid4().hex[:6]}"
+        branch = f"agent/{slugify(state['plan'].summary)}-{uuid.uuid4().hex[:6]}"
         with repo_lock(state["repo_url"]):
             bare_path = ensure_base_clone(state["repo_url"])
             repo_path = create_task_worktree(bare_path, branch)
@@ -131,7 +131,7 @@ class RemediationAgent:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{self._task_description(state['diagnosis_result'])}"
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{self._task_description(state['plan'])}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
@@ -189,7 +189,7 @@ class RemediationAgent:
 
         diff = get_diff_content(state["repo_path"])
         self.logger.info(f"  diff:\n{self._preview(diff, limit=1000)}")
-        result = self.llm_as_judge.evaluate(self._task_description(state["diagnosis_result"]), diff)
+        result = self.llm_as_judge.evaluate(self._task_description(state["plan"]), diff)
         self.logger.info(f"  judge result: correct={result.correct} reasoning={self._preview(result.reasoning)} issues={result.issues}")
 
         if not result.correct:
@@ -222,12 +222,12 @@ class RemediationAgent:
         self.logger.info("\n=== opening PR ===")
         files = get_changed_files(state["repo_path"])
         try:
-            task_description = self._task_description(state["diagnosis_result"])
+            plan_summary = state["plan"].summary
             pr_url = open_pull_request(
                 state["repo_path"],
                 state["branch"],
-                commit_message=f"fix: {task_description}",
-                title=task_description[:72],
+                commit_message=f"fix: {plan_summary}",
+                title=plan_summary[:72],
                 body=self._build_pr_body(files, state.get("eval_reasoning", "")),
             )
             self.logger.info(f"  opened PR: {pr_url}")
@@ -237,10 +237,14 @@ class RemediationAgent:
             return {"messages": [AIMessage(content=f"Failed to open PR: {e}")]}
 
     @staticmethod
-    def _task_description(diagnosis_result: DiagnosisResult) -> str:
-        if diagnosis_result.root_cause:
-            return f"{diagnosis_result.summary}\n\nRoot cause: {diagnosis_result.root_cause}"
-        return diagnosis_result.summary
+    def _task_description(plan: RemediationPlan) -> str:
+        lines = [plan.summary]
+        for step in plan.steps:
+            lines.append(f"\n{step.step_number}. {step.file_path}: {step.description}")
+            if step.old_content is not None:
+                lines.append(f"   old_content:\n{step.old_content}")
+            lines.append(f"   new_content:\n{step.new_content}")
+        return "\n".join(lines)
 
     @staticmethod
     def _build_pr_body(files: list[str], reasoning: str) -> str:
