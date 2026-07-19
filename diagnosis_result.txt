@@ -1,0 +1,6 @@
+{
+  "summary": "The backend application in the dev namespace is not working because all its pods are stuck in CrashLoopBackOff due to repeated OOMKilled events. The backend container has no memory limits defined and is configured with a simulated memory leak (MEMORY_LEAK_MB_PER_SEC=50), causing it to consume more memory than available and be killed by the OOM killer.",
+  "root_cause": "The backend container lacks memory limits and has a memory leak, causing repeated OOM kills and restarts.",
+  "requires_remediation": true,
+  "diagnosis_success": true
+}

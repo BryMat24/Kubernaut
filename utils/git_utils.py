@@ -19,12 +19,14 @@ def run(cmd: list[str], cwd: str) -> str:
 
 
 def get_changed_files(repo: str) -> list[str]:
-    output = run(["git", "diff", "--name-only"], repo)
+    run(["git", "add", "-A"], repo)
+    output = run(["git", "diff", "--cached", "--name-only"], repo)
     return [f.strip() for f in output.splitlines() if f.strip()]
 
 
 def get_diff_content(repo: str) -> str:
-    return run(["git", "diff"], repo)
+    run(["git", "add", "-A"], repo)
+    return run(["git", "diff", "--cached"], repo)
 
 
 def slugify(text: str, max_len: int = 40) -> str:

@@ -45,8 +45,9 @@ class PlannerAgent:
             — do not guess a path.
             2. Use `list_files_in_directory` to explore surrounding structure when needed.
             3. Use `read_file_content` to see the current, exact content of every file your
-            plan will reference — every old_content value in your final plan must be copied
-            verbatim from a file you actually read in this investigation.
+            plan will reference — every anchor you describe and every new_content snippet in
+            your final plan must be grounded in a file you actually read in this investigation,
+            never guessed.
 
             Constraints:
             - Do not propose changes outside what the diagnosed issue requires.

@@ -46,30 +46,20 @@ class RemediationAgent:
             Available tools — this is the complete list, there is no shell, git, or terminal
             access, and no other tool exists: {", ".join(t.name for t in tools)}.
 
-            The task below may already be a concrete, file-by-file plan with exact file paths
-            and old_content/new_content for each step, produced by a prior investigation. When
-            it is, verify the current file content matches old_content before editing (per the
-            "never edit a file you haven't just read" rule below) and apply the specified change
-            directly rather than re-investigating from scratch. Only fall back to the full
-            find/grep-based investigation workflow below when the task is a vague diagnosis
-            without concrete file-level detail.
-
-            Workflow:
-            0. use read_file_content on AGENT.md file which gives information regarding repository
-            and overall architecture
-            1. Use `find` and `grep` to locate the manifest(s) relevant to the task before
-            touching anything — do not guess a path. This will help narrow the file path
-            2. Use `list_files_in_directory` to list files in directory
-            3. Use `read_file_content` to see the current, exact content of a file before
-            editing it. Never edit a file you haven't just read. This is also how you check
-            whether the task is already done: if the value already matches what the task asks
-            for, stop immediately — do not call `edit_file`, do not keep searching other files
-            — and reply with a summary saying no change was needed.
-            4. Use `edit_file` for changes to existing files. `old_content` must be copied
-            verbatim (exact whitespace/indentation) from what you just read, and must be
-            unique in the file — include enough surrounding context to make it so.
-            5. Use `write_file` only to create a genuinely new file. Never use it to rewrite
-            an existing file wholesale.
+            When the task specifies exact file_path values for its steps (a concrete plan), use
+            this workflow:
+            1. For each step, in the order given: call `read_file_content` on that step's
+            file_path directly. Do NOT call `find`, `grep`, or `list_files_in_directory` first —
+            the path is already known, searching for it again wastes iterations.
+            2. Construct `old_content` from the exact content you just read — never from the
+            plan, since the plan does not include it.
+            3. If the current content already matches the step's intended result, that step is
+            already done: do not call `edit_file`/`write_file` for it, move on to the next step.
+            4. Otherwise call `edit_file` (file exists) or `write_file` (the step's description
+            explicitly says this is a new file) with the step's new_content.
+            5. Move to the next step. Do not re-read or re-edit a file whose content already
+            matches the step's intended result — if you already verified it matches, trust that
+            and move on.
             6. If you add or remove a manifest file, update the matching `kustomization.yaml`
             `resources:` list so it stays in sync.
 
@@ -139,7 +129,12 @@ class RemediationAgent:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{self._task_description(state['plan'])}"
+        plan = state["plan"]
+        completed = set(state.get("completed_steps", []))
+        remaining = [s.step_number for s in plan.steps if s.step_number not in completed]
+        progress = f"\n\nSteps completed: {sorted(completed)}. Steps remaining: {remaining}." if plan.steps else ""
+
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{self._task_description(plan)}{progress}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
@@ -174,9 +169,12 @@ class RemediationAgent:
         files = get_changed_files(state["repo_path"])
         self.logger.info(f"  changed files: {files}")
 
+        completed_steps = [s.step_number for s in state["plan"].steps if s.file_path in files]
+        self.logger.info(f"  completed steps: {completed_steps}")
+
         if not files:
             self.logger.info("  no files changed, eval_passed=True")
-            return { "eval_passed": True }
+            return { "eval_passed": True, "completed_steps": completed_steps }
 
         # check yaml structure valid or not
         errorList = []
@@ -192,6 +190,7 @@ class RemediationAgent:
             self.logger.info(f"  yaml syntax invalid, eval_passed=False: {errorList}")
             return {
                 "eval_passed": False,
+                "completed_steps": completed_steps,
                 "messages": [AIMessage(content=f"Review feedback: Error in parsing yaml syntax\nIssues: {json.dumps(errorList)}\nPlease fix.")]
             }
 
@@ -202,12 +201,17 @@ class RemediationAgent:
 
         if not result.correct:
             self.logger.info("  eval_passed=False, sending feedback back to reasoning_node")
-            return {"eval_passed": False, "messages": [AIMessage(content=f"Review feedback: {result.reasoning}\nIssues: {result.issues}\nPlease fix.")] }
+            return {
+                "eval_passed": False,
+                "completed_steps": completed_steps,
+                "messages": [AIMessage(content=f"Review feedback: {result.reasoning}\nIssues: {result.issues}\nPlease fix.")],
+            }
 
         self.logger.info("  eval_passed=True")
         return {
             "eval_passed": True,
             "eval_reasoning": result.reasoning,
+            "completed_steps": completed_steps,
             "messages": [AIMessage(content="All evaluation has passed, proceeding to open PR")],
         }
 
@@ -249,8 +253,6 @@ class RemediationAgent:
         lines = [plan.summary]
         for step in plan.steps:
             lines.append(f"\n{step.step_number}. {step.file_path}: {step.description}")
-            if step.old_content is not None:
-                lines.append(f"   old_content:\n{step.old_content}")
             lines.append(f"   new_content:\n{step.new_content}")
         return "\n".join(lines)
 
@@ -266,3 +268,6 @@ class RemediationAgent:
 
     def invoke(self, initial_state: RemediationAgentState) -> RemediationAgentState:
         return self.graph.invoke(initial_state)
+
+    async def ainvoke(self, initial_state: RemediationAgentState) -> RemediationAgentState:
+        return await self.graph.ainvoke(initial_state)

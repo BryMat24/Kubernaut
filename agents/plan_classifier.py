@@ -16,13 +16,29 @@ class PlanClassifier:
             diagnosed issue:
             summary: {diagnosis_result.summary}{root_cause_line}
 
-            Respond with structured output: summary (plain-language explanation of the overall
-            fix), steps (ordered list of step_number, file_path, description, old_content,
-            new_content — one entry per file change; old_content must be copied verbatim from
-            a file you actually read, and is null only for a brand-new file), and
-            planning_success (true if you found the relevant file(s) and produced a concrete,
-            evidence-backed plan; false if you could not find them or are not confident in
-            the plan).
+            Respond with structured output:
+            - summary: plain-language explanation of the overall fix.
+            - steps: ordered list of step_number, file_path, description, new_content —
+            one entry per file change.
+                - new_content is ONLY the changed/inserted lines themselves, not the whole
+                file but include surrounding related block. Copy any lines you keep
+                unchanged verbatim from what you actually read — do not paraphrase or
+                reformat existing content.
+                - description must state exactly where the change goes, referencing a
+                line or field that appears verbatim in the file you read (e.g. "insert
+                after the `env:` block in the backend container spec") — this anchor is
+                used to locate the edit automatically, so it must be precise and unique
+                within the file.
+                - For a brand-new file, set file_path to the new path and description to
+                state clearly that this is a new file.
+            - planning_success: true if you found the relevant file(s) and produced a
+            concrete, evidence-backed plan; false if you could not find them or are not
+            confident in the plan.
+
+            Every proposed value must be grounded in evidence you actually read in this
+            repo (e.g. a sibling container's existing resource limits) wherever such
+            evidence exists. If no repo convention exists for a value you're proposing,
+            say so explicitly in description rather than inventing a number silently.
         """
 
         prompt_messages = messages + [SystemMessage(content=finalize_prompt)]

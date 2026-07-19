@@ -33,6 +33,7 @@ class RemediationAgentState(MessagesState):
     iteration_count: int
     eval_passed: bool
     eval_reasoning: str
+    completed_steps: list[int]
     pr_url: str
 
     repo_url: str

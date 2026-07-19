@@ -1,0 +1,18 @@
+{
+  "summary": "Add memory limits to the backend container in the dev namespace to prevent OOMKilled events caused by the simulated memory leak. This is done by creating a Kustomize patch file and referencing it in the dev overlay's kustomization.yaml.",
+  "steps": [
+    {
+      "step_number": 1,
+      "file_path": "app/backend/overlays/dev/patch-memory-limits.yaml",
+      "description": "Create a new strategic merge patch file to inject resource limits into the backend container.",
+      "new_content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n    name: backend-deployment\nspec:\n    template:\n        spec:\n            containers:\n                - name: backend\n                  resources:\n                      requests:\n                          memory: \"128Mi\"\n                          cpu: \"100m\"\n                      limits:\n                          memory: \"256Mi\"\n                          cpu: \"500m\"\n"
+    },
+    {
+      "step_number": 2,
+      "file_path": "app/backend/overlays/dev/kustomization.yaml",
+      "description": "Insert a `patches` section after the `resources:` block to apply the new memory limits patch.",
+      "new_content": "resources:\n    - ../../base\npatches:\n    - path: patch-memory-limits.yaml\n"
+    }
+  ],
+  "planning_success": true
+}
