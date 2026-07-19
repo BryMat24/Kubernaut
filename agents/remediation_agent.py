@@ -1,7 +1,7 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, AIMessage
 from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from typing import Any, Literal
@@ -16,6 +16,8 @@ from utils import (
     repo_lock,
 )
 from .judge import DiffEvaluator
+from graph.state import RemediationAgentState
+from models import RemediationPlan
 import logging
 import yaml
 import json
@@ -24,18 +26,6 @@ import uuid
 import os
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-class RemediationAgentState(MessagesState):
-    task: str # provided by caller
-    iteration_count: int
-    eval_passed: bool
-    eval_reasoning: str
-    pr_url: str
-
-    repo_url: str       # provided by the caller, e.g. from frontend input
-    bare_path: str       # set by _setup_node: shared bare clone for repo_url
-    repo_path: str       # set by _setup_node: this task's worktree
-    branch: str          # set by _setup_node: branch created for this task's worktree
 
 class RemediationAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool], llm_judge: BaseChatModel) -> None:
@@ -55,6 +45,14 @@ class RemediationAgent:
 
             Available tools — this is the complete list, there is no shell, git, or terminal
             access, and no other tool exists: {", ".join(t.name for t in tools)}.
+
+            The task below may already be a concrete, file-by-file plan with exact file paths
+            and old_content/new_content for each step, produced by a prior investigation. When
+            it is, verify the current file content matches old_content before editing (per the
+            "never edit a file you haven't just read" rule below) and apply the specified change
+            directly rather than re-investigating from scratch. Only fall back to the full
+            find/grep-based investigation workflow below when the task is a vague diagnosis
+            without concrete file-level detail.
 
             Workflow:
             0. use read_file_content on AGENT.md file which gives information regarding repository
@@ -120,7 +118,7 @@ class RemediationAgent:
 
     def _setup_node(self, state: RemediationAgentState) -> dict[str, Any]:
         self.logger.info("\n=== setup ===")
-        branch = f"agent/{slugify(state['task'])}-{uuid.uuid4().hex[:6]}"
+        branch = f"agent/{slugify(state['plan'].summary)}-{uuid.uuid4().hex[:6]}"
         with repo_lock(state["repo_url"]):
             bare_path = ensure_base_clone(state["repo_url"])
             repo_path = create_task_worktree(bare_path, branch)
@@ -141,7 +139,7 @@ class RemediationAgent:
         iteration = state.get("iteration_count", 0) + 1
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{state['task']}"
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{self._task_description(state['plan'])}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
@@ -199,7 +197,7 @@ class RemediationAgent:
 
         diff = get_diff_content(state["repo_path"])
         self.logger.info(f"  diff:\n{self._preview(diff, limit=1000)}")
-        result = self.llm_as_judge.evaluate(state["task"], diff)
+        result = self.llm_as_judge.evaluate(self._task_description(state["plan"]), diff)
         self.logger.info(f"  judge result: correct={result.correct} reasoning={self._preview(result.reasoning)} issues={result.issues}")
 
         if not result.correct:
@@ -232,11 +230,12 @@ class RemediationAgent:
         self.logger.info("\n=== opening PR ===")
         files = get_changed_files(state["repo_path"])
         try:
+            plan_summary = state["plan"].summary
             pr_url = open_pull_request(
                 state["repo_path"],
                 state["branch"],
-                commit_message=f"fix: {state['task']}",
-                title=state["task"][:72],
+                commit_message=f"fix: {plan_summary}",
+                title=plan_summary[:72],
                 body=self._build_pr_body(files, state.get("eval_reasoning", "")),
             )
             self.logger.info(f"  opened PR: {pr_url}")
@@ -244,6 +243,16 @@ class RemediationAgent:
         except Exception as e:
             self.logger.info(f"  failed to open PR: {e}")
             return {"messages": [AIMessage(content=f"Failed to open PR: {e}")]}
+
+    @staticmethod
+    def _task_description(plan: RemediationPlan) -> str:
+        lines = [plan.summary]
+        for step in plan.steps:
+            lines.append(f"\n{step.step_number}. {step.file_path}: {step.description}")
+            if step.old_content is not None:
+                lines.append(f"   old_content:\n{step.old_content}")
+            lines.append(f"   new_content:\n{step.new_content}")
+        return "\n".join(lines)
 
     @staticmethod
     def _build_pr_body(files: list[str], reasoning: str) -> str:
