@@ -4,110 +4,104 @@ An autonomous (human-gated) SRE agent for Kubernetes that answers questions, dia
 
 ---
 
-## 1. Scope
+## 1. Functionality
 
-- Chat-based Q&A over live cluster state ("what namespace is pod X in?").
-- Diagnose using cluster state (pods, events, describe), logs (Loki) and prometheus alerts
-- Produce a remediation plan and, when the fix is a config/manifest change, open - a GitHub PR via a coding agent.
-  Be safe by default: read-then-act, human approval before any mutation, full audit trail.
+- Chat-based Q&A over live cluster state ("what namespace is pod X in?", "why is the backend-deployment keeps on failing on dev namespace?").
+- Diagnose using cluster state (pods, events, describe), and prometheus metrics
+- Produce a remediation plan and, when the fix is a config/manifest change, open - a GitHub PR.
 
-## 2. MVP Architecture Diagram
+## 2. Architecture Diagram
 
 ```mermaid
 flowchart TB
-    subgraph ENTRY["Entry points"]
-        WEBHOOK[Alertmanager webhook]
-        CHAT[Chat / CLI]
-    end
+    CLI[CLI — graph/builder.py main] -->|query, repo_url| DIAG_LOOP
 
-    WEBHOOK --> SUP
-    CHAT --> SUP
-
-    subgraph AGENT_POD["diagnosis-agent pod — monolith, one LangGraph process"]
+    subgraph GRAPH["Orchestrator graph — graph/builder.py, one LangGraph process"]
         direction TB
 
-        subgraph SUP_LOOP["Supervisor — own reasoning loop"]
-            SUP[Reasoning node]
-            SUP -->|calls sub-agent as tool| DISPATCH{Which agent?}
+        subgraph DIAG["DiagnosisAgent — read-only"]
+            DIAG_LOOP[reasoning ⇄ tool loop]
+            DIAG_LOOP --> DIAG_FIN[finalize_node<br/>Classifier to DiagnosisResult]
         end
 
-        DISPATCH -->|scheduling, crash,<br/>resource state| K8S_AGENT
-        DISPATCH -->|latency, error rate,<br/>resource trend| OBS_AGENT
-        DISPATCH -->|recent change,<br/>deploy correlation| GITOPS_AGENT
+        DIAG_FIN --> ROUTE{require_remediation_routing_node:<br/>confident AND nothing to fix?}
+        ROUTE -->|yes| DONE1([Report diagnosis to user])
+        ROUTE -->|no — fix needed, or<br/>uncertain: never fail-open| PLAN_LOOP
 
-        K8S_AGENT -->|findings| SUP
-        OBS_AGENT -->|findings| SUP
-        GITOPS_AGENT -->|findings| SUP
-
-        SUP -->|enough evidence,<br/>root cause established| REMED_GATE{Remediate?}
-        REMED_GATE -->|yes| REMED_AGENT
-        REMED_GATE -->|diagnosis only| DONE([Report to user])
-
-        subgraph K8S_AGENT["K8s Agent — read-only"]
-            K8S_LOOP[reasoning loop]
+        subgraph PLAN["PlannerAgent — read-only, own git worktree (plan/...)"]
+            PLAN_LOOP[reasoning ⇄ tool loop<br/>find / grep / list_files / read_file]
+            PLAN_LOOP --> PLAN_FIN[finalize_node<br/>PlanClassifier to RemediationPlan]
         end
 
-        subgraph OBS_AGENT["Observability Agent — read-only"]
-            OBS_LOOP[reasoning loop]
+        PLAN_FIN --> GATE[[human_approval_node<br/>HITL interrupt: diagnosis + plan]]
+        GATE -->|approved| REMED_LOOP
+        GATE -->|rejected| DONE2([Report diagnosis + plan,<br/>no mutation])
+
+        subgraph REMED["RemediationAgent — write-capable, own git worktree (agent/...)"]
+            REMED_LOOP[reasoning ⇄ tool loop<br/>read / edit / write files]
+            REMED_LOOP --> EVAL{evaluation_node:<br/>YAML syntax + DiffEvaluator judge}
+            EVAL -->|fail, feedback loop| REMED_LOOP
+            EVAL -->|pass| PR[pr_node:<br/>commit, push, gh pr create]
         end
 
-        subgraph GITOPS_AGENT["GitOps Investigation Agent — read-only"]
-            GI_LOOP[reasoning loop:<br/>recent commits, ArgoCD sync,<br/>deployment history]
-        end
+        PR --> DONE3([Report PR URL to user])
 
-        subgraph REMED_AGENT["Remediation Agent — write-capable"]
-            RD[Draft fix<br/>local coding tools]
-            RD --> RGATE[[HITL interrupt]]
-            RGATE -->|approved| RE[Execute: commit + PR]
-            RGATE -->|rejected| RR[Return, no mutation]
-        end
-
-        REMED_AGENT -->|PR link / rejection| DONE2([Report to user])
-
-        CHECKPOINT[(Checkpointer<br/>short-term memory<br/>+ HITL resume state)]
-        VECTOR[(Vector store<br/>long-term memory<br/>runbooks, past incidents)]
-
-        SUP -.-> CHECKPOINT
-        RGATE -.-> CHECKPOINT
-        K8S_LOOP -.retrieval.-> VECTOR
-        OBS_LOOP -.retrieval.-> VECTOR
-        RD -.local tools.-> CODING[coding_tools.py<br/>list/read/grep/edit files]
+        CHECKPOINT[(MemorySaver<br/>in-memory checkpointer<br/>HITL resume state)]
+        GATE -.-> CHECKPOINT
     end
 
-    K8S_LOOP -->|MCP, streamable_http| K8S_MCP
-    OBS_LOOP -->|MCP| PROM_MCP
-    OBS_LOOP -->|MCP| LOKI_MCP
-    GI_LOOP -->|MCP| GH_READ_MCP
-    RE -->|MCP| GH_WRITE_MCP
-
-    subgraph MCP_TIER["MCP servers — separate pods, scoped RBAC"]
-        K8S_MCP[k8s-mcp-server<br/>read-only ServiceAccount]
-        PROM_MCP[prometheus-mcp-server]
-        LOKI_MCP[loki-mcp-server]
-        GH_READ_MCP[github-mcp-server<br/>read: commits, ArgoCD status]
-        GH_WRITE_MCP[github-mcp-server<br/>write: branch, commit, PR]
-    end
+    DIAG_LOOP -->|MCP, streamable_http| K8S_MCP[k8s-mcp-server<br/>read-only, shells to kubectl]
+    DIAG_LOOP -->|MCP, streamable_http| PROM_MCP[prometheus-mcp-server<br/>PromQL over HTTP]
+    PLAN_LOOP -.local file tools.-> REPO[(GitOps repo<br/>bare clone + per-task worktree)]
+    REMED_LOOP -.local file tools.-> REPO
+    PR -->|gh CLI| GHUB[(GitHub)]
 
     K8S_MCP --> K8SAPI[(Kubernetes API)]
     PROM_MCP --> PROM[(Prometheus)]
-    LOKI_MCP --> LOKI[(Loki)]
-    GH_READ_MCP --> GHUB[(GitHub / ArgoCD)]
-    GH_WRITE_MCP --> GHUB
 ```
 
 ---
 
-## 3. Tech Stack Summary
+## 3. Workflow
 
-| Layer             | Choice                                                                           |
-| ----------------- | -------------------------------------------------------------------------------- |
-| Orchestration     | **LangGraph** (supervisor + subgraphs, Postgres checkpointer, HITL interrupts)   |
-| Serving           | FastAPI / LangServe                                                              |
-| Tools             | **MCP servers**: Kubernetes, Prometheus, Loki, GitHub (`langchain-mcp-adapters`) |
-| RAG               | pgvector or Qdrant + embedding/ingestion pipeline                                |
-| State/Memory      | Postgres (checkpointer + audit)                                                  |
-| Observability     | LangSmith + OpenTelemetry                                                        |
-| Policy/Validation | OPA/Conftest, kubeconform, helm, kustomize                                       |
-| Delivery          | GitHub PRs → Argo CD (GitOps)                                                    |
-| Packaging         | Helm umbrella chart; coding agent as per-run K8s `Job`                           |
-| Secrets           | External Secrets Operator / Vault                                                |
+1. The user submits a query via the CLI (`graph/builder.py`'s `main()`) — a question or an
+   incident description — along with the GitOps repo URL to use if remediation turns out to be
+   needed.
+2. **`DiagnosisAgent`** investigates read-only, in a reasoning ⇄ tool loop against
+   `k8s-mcp-server` and `prometheus-mcp-server`, then hands its findings to a classifier LLM
+   call that produces a structured `DiagnosisResult` (summary, root cause, whether remediation
+   is required, and whether the diagnosis itself was confident/complete).
+3. The orchestrator routes on that result: if the diagnosis is confident **and** nothing needs
+   fixing, it reports the diagnosis to the user and stops. Otherwise — a real issue was found,
+   or the diagnosis was inconclusive — it proceeds to planning. An uncertain diagnosis is never
+   treated as "nothing to do."
+4. **`PlannerAgent`** clones the GitOps repo into its own isolated, read-only git worktree
+   (`plan/...` branch) and investigates which file(s) need to change, then hands its findings to
+   its own classifier call, producing a structured `RemediationPlan` — an ordered, file-by-file
+   list of concrete steps.
+5. The graph pauses at a **human-in-the-loop interrupt**, showing both the diagnosis and the
+   proposed plan for review — no mutation happens without explicit approval.
+6. If the human rejects, the graph ends with nothing changed. If approved, **`RemediationAgent`**
+   takes over in its own separate, write-capable git worktree (`agent/...` branch).
+7. For each plan step, `RemediationAgent` reads the target file directly (falling back to a
+   broader `find`/`grep` investigation only if a step's file isn't where expected) and applies
+   the change.
+8. Before opening a PR, it validates its own diff — YAML syntax check, then an LLM judge that
+   checks the change actually and narrowly addresses the task — looping back to fix issues until
+   the diff passes, or until it exhausts its iteration budget.
+9. Once the diff passes, it commits, pushes its branch, and opens a GitHub PR via the `gh` CLI,
+   then reports the PR URL back to the user.
+
+---
+
+## 4. Tech Stack Summary
+
+| Layer         | Choice                                                                         |
+| ------------- | ------------------------------------------------------------------------------ |
+| Orchestration | **LangGraph** (supervisor + subgraphs, Postgres checkpointer, HITL interrupts) |
+| Serving       | FastAPI                                                                        |
+| Tools         | **MCP servers**: Kubernetes, Prometheus (`langchain-mcp-adapters`)             |
+| State/Memory  | Postgres (checkpointer + audit)                                                |
+| Observability | LangSmith + OpenTelemetry                                                      |
+| Delivery      | GitHub PRs → Argo CD (GitOps)                                                  |
+| Packaging     | Helm umbrella chart                                                            |
