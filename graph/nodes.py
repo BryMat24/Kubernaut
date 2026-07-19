@@ -48,9 +48,11 @@ def human_approval_node(state: OrchestratorState) -> dict:
         "diagnosis": state["diagnosis_result"],
         "plan": state["plan"],
     })
-    return {
-        "approved": decision.get("approved", False),
-    }
+    update = {"approved": decision.get("approved", False)}
+    edited_plan = decision.get("edited_plan")
+    if edited_plan is not None:
+        update["plan"] = edited_plan
+    return update
 
 
 def approval_routing(state: OrchestratorState) -> Literal["remediation_agent", "end"]:

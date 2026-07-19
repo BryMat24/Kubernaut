@@ -2,6 +2,7 @@ import asyncio
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from dotenv import load_dotenv
@@ -60,7 +61,7 @@ async def init_remediation_agent() -> RemediationAgent:
     return RemediationAgent(llm, file_tools, judge_llm)
 
 
-async def build_graph() -> CompiledStateGraph:
+async def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     diagnosis_agent = await init_diagnosis_agent()
     planner_agent = await init_planner_agent()
     remediation_agent = await init_remediation_agent()
@@ -85,7 +86,7 @@ async def build_graph() -> CompiledStateGraph:
     )
     graph.add_edge("remediation_agent", END)
 
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile(checkpointer=checkpointer or MemorySaver())
 
 
 async def main() -> None:
