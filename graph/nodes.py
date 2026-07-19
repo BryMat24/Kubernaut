@@ -1,7 +1,7 @@
 from typing import Literal
 
 from langgraph.types import interrupt
-from agents import DiagnosisAgent, RemediationAgent
+from agents import DiagnosisAgent, PlannerAgent, RemediationAgent
 from graph.state import OrchestratorState
 
 
@@ -17,15 +17,37 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
     return diagnose_node
 
 
-def require_remediation_routing_node(state: OrchestratorState) -> Literal["human_approval_node", "end"]:
+def require_remediation_routing_node(state: OrchestratorState) -> Literal["planner_agent", "end"]:
     diagnosis_result = state["diagnosis_result"]
+    # End only on a confident diagnosis that found nothing to fix. Every other case —
+    # a confirmed issue, or an inconclusive/incomplete investigation — goes to a human;
+    # never fail-open by defaulting an uncertain result to "end".
     if diagnosis_result.diagnosis_success and not diagnosis_result.requires_remediation:
         return "end"
-    return "human_approval_node"
+    return "planner_agent"
+
+
+def make_planner_node(planner_agent: PlannerAgent):
+    async def planner_node(state: OrchestratorState) -> dict:
+        result = await planner_agent.ainvoke({
+            "messages": [],
+            "diagnosis_result": state["diagnosis_result"],
+            "iteration_count": 0,
+            "repo_url": state["repo_url"],
+            "bare_path": "",
+            "repo_path": "",
+            "branch": "",
+        })
+        return {"plan": result["plan"]}
+
+    return planner_node
 
 
 def human_approval_node(state: OrchestratorState) -> dict:
-    decision = interrupt({"diagnosis": state["diagnosis_result"]})
+    decision = interrupt({
+        "diagnosis": state["diagnosis_result"],
+        "plan": state["plan"],
+    })
     return {
         "approved": decision.get("approved", False),
     }
@@ -39,7 +61,7 @@ def make_remediate_node(remediation_agent: RemediationAgent):
     async def remediate_node(state: OrchestratorState) -> dict:
         result = await remediation_agent.ainvoke({
             "messages": [],
-            "diagnosis_result": state["diagnosis_result"],
+            "plan": state["plan"],
             "iteration_count": 0,
             "eval_passed": False,
             "eval_reasoning": "",
