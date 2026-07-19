@@ -16,6 +16,7 @@ from tools.file_tools import (
 from graph.nodes import (
     make_diagnose_node,
     human_approval_node,
+    require_remediation_routing_node,
     approval_routing,
     make_remediate_node,
 )
@@ -57,7 +58,11 @@ async def build_graph() -> CompiledStateGraph:
     graph.add_node("remediation_agent", make_remediate_node(remediation_agent))
 
     graph.add_edge(START, "diagnosis_agent")
-    graph.add_edge("diagnosis_agent", "human_approval_node")
+    graph.add_conditional_edges(
+        "diagnosis_agent",
+        require_remediation_routing_node,
+        {"human_approval_node": "human_approval_node", "end": END},
+    )
     graph.add_conditional_edges(
         "human_approval_node",
         approval_routing,

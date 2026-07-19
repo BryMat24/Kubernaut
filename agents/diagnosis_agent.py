@@ -8,7 +8,9 @@ from langgraph.prebuilt import ToolNode
 from typing import Any, Literal
 import logging
 from dotenv import load_dotenv
+from models import DiagnosisResult
 
+from .classifier import Classifier
 from graph.state import DiagnosisAgentState
 
 load_dotenv()
@@ -85,6 +87,7 @@ class DiagnosisAgent:
             autoscaling IS working correctly and is intentionally capped by
             configuration — that is not a malfunction.
         """
+        self.classifier = Classifier(llm)
         self.graph = self._build_graph()
 
     def _build_graph(self) -> CompiledStateGraph:
@@ -93,14 +96,16 @@ class DiagnosisAgent:
         graph = StateGraph(state_schema=DiagnosisAgentState)
         graph.add_node("reasoning_node", self._reasoning_node)
         graph.add_node("tool_node", self._tool_node)
+        graph.add_node("finalize_node", self._finalize_node)
 
         graph.add_edge(START, "reasoning_node")
         graph.add_conditional_edges(
             "reasoning_node",
             self._tool_routing,
-            {"tool_node": "tool_node", "end": END},
+            {"tool_node": "tool_node", "finalize_node": "finalize_node"},
         )
         graph.add_edge("tool_node", "reasoning_node")
+        graph.add_edge("finalize_node", END)
         return graph.compile()
 
     def _reasoning_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
@@ -127,15 +132,42 @@ class DiagnosisAgent:
             self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result
 
-    def _tool_routing(self, state: DiagnosisAgentState) -> Literal["tool_node", "end"]:
+    def _tool_routing(self, state: DiagnosisAgentState) -> Literal["tool_node", "finalize_node"]:
         if state.get("iteration_count", 0) >= self.MAX_ITERATIONS:
             self.logger.info(f"  hit MAX_ITERATIONS ({self.MAX_ITERATIONS}), stopping")
-            return "end"
-        
+            return "finalize_node"
+
         last_message = state["messages"][-1]
         if getattr(last_message, "tool_calls", None):
             return "tool_node"
-        return "end"
+        return "finalize_node"
+
+    async def _finalize_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+        self.logger.info("\n=== finalize ===")
+        hit_max_iterations = state.get("iteration_count", 0) >= self.MAX_ITERATIONS
+        last_message = state["messages"][-1]
+        incomplete = hit_max_iterations and bool(getattr(last_message, "tool_calls", None))
+
+        if incomplete:
+            self.logger.warning(
+                f"  MAX_ITERATIONS ({self.MAX_ITERATIONS}) hit mid-investigation "
+                f"— forcing escalation instead of trusting partial classification"
+            )
+            parsed = DiagnosisResult(
+                summary=(
+                    "Investigation did not complete within the iteration budget "
+                    f"({self.MAX_ITERATIONS} steps). Findings so far are incomplete; "
+                    "escalating to human review rather than risking a false negative."
+                ),
+                root_cause=None,
+                requires_remediation=True,
+                diagnosis_success=False # fail-safe: force human path, never fail-open
+            )
+            return {"diagnosis_result": parsed}
+        else:
+            parsed = await self.classifier.classify(state["query"], last_message)
+            self.logger.info(f"  requires_remediation={parsed.requires_remediation} summary={self._preview(parsed.summary)}")
+            return {"diagnosis_result": parsed}
     
     @staticmethod
     def _preview(text: Any, limit: int = 300) -> str:

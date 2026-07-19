@@ -12,16 +12,22 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
             "query": state["query"],
             "iteration_count": 0,
         })
-        return {"diagnosis_result": result["messages"][-1].content}
+        return {"diagnosis_result": result["diagnosis_result"]}
 
     return diagnose_node
+
+
+def require_remediation_routing_node(state: OrchestratorState) -> Literal["human_approval_node", "end"]:
+    diagnosis_result = state["diagnosis_result"]
+    if diagnosis_result.diagnosis_success and not diagnosis_result.requires_remediation:
+        return "end"
+    return "human_approval_node"
 
 
 def human_approval_node(state: OrchestratorState) -> dict:
     decision = interrupt({"diagnosis": state["diagnosis_result"]})
     return {
         "approved": decision.get("approved", False),
-        "task": decision.get("task") or state["diagnosis_result"],
     }
 
 
@@ -33,7 +39,7 @@ def make_remediate_node(remediation_agent: RemediationAgent):
     async def remediate_node(state: OrchestratorState) -> dict:
         result = await remediation_agent.ainvoke({
             "messages": [],
-            "task": state["task"],
+            "diagnosis_result": state["diagnosis_result"],
             "iteration_count": 0,
             "eval_passed": False,
             "eval_reasoning": "",
