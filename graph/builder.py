@@ -3,6 +3,7 @@ import asyncio
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 from dotenv import load_dotenv
 from mcp_clients import get_k8s_mcp_tools, get_promql_mcp_tools
 from tools.file_tools import (
@@ -100,25 +101,49 @@ async def main() -> None:
     with open("graph.png", "wb") as f:
         f.write(png_bytes)
 
-    # result = await graph.ainvoke({
-    #     "query": "How many deployments in dev namespace",
-    #     "repo_url": "https://github.com/example-org/example-gitops-repo",
-    # }, config=config)
+    query = input("What would you like to investigate? ").strip()
+    repo_url = input("GitOps repo URL (used only if remediation is needed): ").strip()
 
-    # interrupt_info = result["__interrupt__"][0].value
-    # print("=== diagnosis ===")
-    # print(interrupt_info["diagnosis"])
+    result = await graph.ainvoke({
+        "query": query,
+        "repo_url": repo_url,
+    }, config=config)
 
-    # approve = input("\nApprove remediation? [y/N] ").strip().lower() == "y"
-    # result = await graph.ainvoke(Command(resume={"approved": approve}), config=config)
+    interrupt_info = result.get("__interrupt__")
+    if not interrupt_info:
+        diagnosis = result.get("diagnosis_result")
+        print("\n=== Diagnosis ===")
+        print(diagnosis.summary if diagnosis else "(no diagnosis result)")
+        print("\nNo remediation needed — done.")
+        return
 
-    # if approve:
-    #     print("\n=== remediation ===")
-    #     print(f"pr_url: {result.get('pr_url') or '(no PR opened)'}")
-    #     print(f"eval_passed: {result.get('eval_passed')}")
-    #     print(f"eval_reasoning: {result.get('eval_reasoning')}")
-    # else:
-    #     print("\nRemediation not approved, diagnosis only.")
+    payload = interrupt_info[0].value
+    diagnosis = payload["diagnosis"]
+    plan = payload["plan"]
+
+    print("\n=== Diagnosis ===")
+    print(f"summary: {diagnosis.summary}")
+    if diagnosis.root_cause:
+        print(f"root_cause: {diagnosis.root_cause}")
+
+    print("\n=== Proposed plan ===")
+    print(f"summary: {plan.summary}")
+    print(f"planning_success: {plan.planning_success}")
+    for step in plan.steps:
+        print(f"\n{step.step_number}. {step.file_path}: {step.description}")
+        print(f"   new_content:\n{step.new_content}")
+
+    approve = input("\nApprove remediation? [y/N] ").strip().lower() == "y"
+
+    result = await graph.ainvoke(Command(resume={"approved": approve}), config=config)
+
+    if approve:
+        print("\n=== Remediation result ===")
+        print(f"pr_url: {result.get('pr_url') or '(no PR opened)'}")
+        print(f"eval_passed: {result.get('eval_passed')}")
+        print(f"eval_reasoning: {result.get('eval_reasoning')}")
+    else:
+        print("\nRemediation not approved. Diagnosis only.")
 
 
 if __name__ == "__main__":
