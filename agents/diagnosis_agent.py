@@ -10,7 +10,7 @@ import logging
 from dotenv import load_dotenv
 from models import DiagnosisResult
 
-from .classifier import Classifier
+from .helpers import Classifier
 from graph.state import DiagnosisAgentState
 
 load_dotenv()

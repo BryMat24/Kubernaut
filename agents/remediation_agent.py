@@ -15,7 +15,7 @@ from utils import (
     remove_task_worktree,
     repo_lock,
 )
-from .judge import DiffEvaluator
+from .helpers import DiffEvaluator
 from graph.state import RemediationAgentState
 from models import RemediationPlan
 import logging
