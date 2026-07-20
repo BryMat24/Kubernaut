@@ -13,7 +13,7 @@ from utils import (
     repo_lock,
     run,
 )
-from .plan_classifier import PlanClassifier
+from .helpers import PlanClassifier
 from graph.state import PlannerAgentState
 from models import RemediationPlan
 import logging

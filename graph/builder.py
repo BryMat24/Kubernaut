@@ -2,6 +2,7 @@ import asyncio
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from dotenv import load_dotenv
@@ -60,7 +61,7 @@ async def init_remediation_agent() -> RemediationAgent:
     return RemediationAgent(llm, file_tools, judge_llm)
 
 
-async def build_graph() -> CompiledStateGraph:
+async def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     diagnosis_agent = await init_diagnosis_agent()
     planner_agent = await init_planner_agent()
     remediation_agent = await init_remediation_agent()
@@ -85,66 +86,4 @@ async def build_graph() -> CompiledStateGraph:
     )
     graph.add_edge("remediation_agent", END)
 
-    return graph.compile(checkpointer=MemorySaver())
-
-
-async def main() -> None:
-    graph = await build_graph()
-
-    config = {"configurable": {"thread_id": "demo-1"}}
-
-    mermaid_syntax = graph.get_graph().draw_mermaid()
-    print(mermaid_syntax)
-
-    # 2. Render directly to PNG (uses mermaid.ink API by default)
-    png_bytes = graph.get_graph().draw_mermaid_png()
-    with open("graph.png", "wb") as f:
-        f.write(png_bytes)
-
-    query = input("What would you like to investigate? ").strip()
-    repo_url = input("GitOps repo URL (used only if remediation is needed): ").strip()
-
-    result = await graph.ainvoke({
-        "query": query,
-        "repo_url": repo_url,
-    }, config=config)
-
-    interrupt_info = result.get("__interrupt__")
-    if not interrupt_info:
-        diagnosis = result.get("diagnosis_result")
-        print("\n=== Diagnosis ===")
-        print(diagnosis.summary if diagnosis else "(no diagnosis result)")
-        print("\nNo remediation needed — done.")
-        return
-
-    payload = interrupt_info[0].value
-    diagnosis = payload["diagnosis"]
-    plan = payload["plan"]
-
-    print("\n=== Diagnosis ===")
-    print(f"summary: {diagnosis.summary}")
-    if diagnosis.root_cause:
-        print(f"root_cause: {diagnosis.root_cause}")
-
-    print("\n=== Proposed plan ===")
-    print(f"summary: {plan.summary}")
-    print(f"planning_success: {plan.planning_success}")
-    for step in plan.steps:
-        print(f"\n{step.step_number}. {step.file_path}: {step.description}")
-        print(f"   new_content:\n{step.new_content}")
-
-    approve = input("\nApprove remediation? [y/N] ").strip().lower() == "y"
-
-    result = await graph.ainvoke(Command(resume={"approved": approve}), config=config)
-
-    if approve:
-        print("\n=== Remediation result ===")
-        print(f"pr_url: {result.get('pr_url') or '(no PR opened)'}")
-        print(f"eval_passed: {result.get('eval_passed')}")
-        print(f"eval_reasoning: {result.get('eval_reasoning')}")
-    else:
-        print("\nRemediation not approved. Diagnosis only.")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return graph.compile(checkpointer=checkpointer or MemorySaver())
