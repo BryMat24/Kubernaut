@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel
 
 from models import RemediationPlan
@@ -6,6 +8,7 @@ from models import RemediationPlan
 class DiagnoseRequest(BaseModel):
     query: str
     repo_url: str
+    chat_id: UUID | None = None
 
 
 class ApprovalDecision(BaseModel):
