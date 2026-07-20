@@ -5,10 +5,14 @@ from pydantic import BaseModel
 from models import RemediationPlan
 
 
+class ChatCreateRequest(BaseModel):
+    title: str
+    repo_url: str
+
+
 class DiagnoseRequest(BaseModel):
     query: str
-    repo_url: str
-    chat_id: UUID | None = None
+    chat_id: UUID
 
 
 class ApprovalDecision(BaseModel):
