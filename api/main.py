@@ -4,6 +4,7 @@ import os
 import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
@@ -12,12 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db_session, init_models
 from api.orm import Chat, Message, MessageRole
-from api.schemas import ApprovalDecision, DiagnoseRequest
+from api.schemas import ApprovalDecision, ChatCreateRequest, DiagnoseRequest
 from graph.builder import build_graph
 from models import DiagnosisResult, RemediationPlan
 from models.eval_result import EvalResult
 from models.scenario_eval_result import ScenarioEvalResult
-from api.service import generate_title
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -37,24 +37,42 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Kubernaut API", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.post("/chats")
+async def create_chat(body: ChatCreateRequest, db: AsyncSession = Depends(get_db_session)):
+    chat = Chat(title=body.title, repo_url=body.repo_url)
+    db.add(chat)
+    await db.commit()
+    await db.refresh(chat)
+
+    return {
+        "id": str(chat.id),
+        "title": chat.title,
+        "repo_url": chat.repo_url,
+        "created_at": chat.created_at.isoformat(),
+    }
+
 
 @app.post("/diagnose")
 async def start_diagnosis(body: DiagnoseRequest, db: AsyncSession = Depends(get_db_session)):
-    if body.chat_id is not None:
-        chat = await db.get(Chat, body.chat_id)
-        if chat is None:
-            raise HTTPException(status_code=404, detail=f"unknown chat_id: {body.chat_id}")
-    else:
-        chat = Chat(title=generate_title(body.query))
-        db.add(chat)
-        await db.flush()
+    chat = await db.get(Chat, body.chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"unknown chat_id: {body.chat_id}")
 
     db.add(Message(chat_id=chat.id, role=MessageRole.USER, content=body.query))
 
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     result = await app.state.graph.ainvoke(
-        {"query": body.query, "repo_url": body.repo_url}, config=config
+        {"query": body.query, "repo_url": chat.repo_url}, config=config
     )
 
     if "__interrupt__" in result:
@@ -145,6 +163,7 @@ async def get_chat_messages(chat_id: UUID, db: AsyncSession = Depends(get_db_ses
         for m in messages
     ]
 
+
 @app.get("/chats")
 async def get_chats(db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Chat).order_by(Chat.created_at.desc()))
@@ -154,6 +173,7 @@ async def get_chats(db: AsyncSession = Depends(get_db_session)):
         {
             "id": str(c.id),
             "title": c.title,
+            "repo_url": c.repo_url,
             "created_at": c.created_at.isoformat(),
         }
         for c in chats
