@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import Composer from "@/components/Composer";
+import PlanCard from "@/components/PlanCard";
 
 export type TimelineItem =
   | { kind: "message"; id: string; message: ChatMessage }
@@ -138,18 +139,30 @@ export default function ChatView({ chatId }: ChatViewProps) {
           item.kind === "message" ? (
             <MessageBubble key={item.id} message={item.message} />
           ) : (
-            <div
+            <PlanCard
               key={item.id}
-              className="rounded-md border border-amber-500/30 bg-amber-500/[0.08] px-4 py-3 text-sm text-amber-200"
-            >
-              <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-amber-300/80">
-                <span aria-hidden="true">»</span>
-                <span>Awaiting approval</span>
-              </div>
-              <p className="mt-1.5 leading-relaxed text-amber-100">
-                Plan ready for review (thread {item.threadId}).
-              </p>
-            </div>
+              threadId={item.threadId}
+              plan={item.plan}
+              onResolved={(outcome) => {
+                setItems((prev) =>
+                  prev.map((i) =>
+                    i.id === item.id
+                      ? {
+                          kind: "message",
+                          id: item.id,
+                          message: {
+                            id: item.id,
+                            role: "assistant",
+                            content: outcome,
+                            thread_id: item.threadId,
+                            created_at: new Date().toISOString(),
+                          },
+                        }
+                      : i
+                  )
+                );
+              }}
+            />
           )
         )}
 
