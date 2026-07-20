@@ -3,6 +3,13 @@
 Date: 2026-07-20
 Status: approved, pending implementation
 
+## Implementation note
+
+The actual UI build (component styling/layout work in `/ui`) should be done using the
+`frontend-design` skill, not ad hoc — invoke it for the frontend implementation tasks in the
+plan. Backend changes (the `/api` section below) aren't in that skill's scope and follow the
+normal implementation path.
+
 ## Problem
 
 Kubernaut has a working FastAPI backend (`/api`) that runs the diagnosis → plan → human-approval →
