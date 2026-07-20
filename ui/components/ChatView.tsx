@@ -179,7 +179,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
         <div ref={bottomRef} />
       </div>
 
-      <Composer onSend={handleSend} disabled={sending} />
+      <Composer onSend={handleSend} disabled={sending || historyLoading} />
     </div>
   );
 }
