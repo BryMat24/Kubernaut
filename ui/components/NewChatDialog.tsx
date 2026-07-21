@@ -43,10 +43,13 @@ export default function NewChatDialog({ onClose, onCreated }: NewChatDialogProps
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-lg border border-border bg-panel p-6 shadow-2xl shadow-black/40 space-y-5"
+        className="w-full max-w-sm rounded-lg border border-border bg-panel-raised p-6 shadow-2xl shadow-black/60 space-y-5"
       >
         <div>
-          <h2 className="text-base font-semibold text-foreground">New chat</h2>
+          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-signal">
+            New mission
+          </span>
+          <h2 className="mt-1 font-display text-base font-bold text-foreground">New chat</h2>
           <p className="mt-1 text-xs text-muted">Start an investigation against a GitOps repo.</p>
         </div>
 
@@ -60,7 +63,7 @@ export default function NewChatDialog({ onClose, onCreated }: NewChatDialogProps
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-signal/50"
             placeholder="e.g. backend memory issue"
           />
         </div>
@@ -74,13 +77,13 @@ export default function NewChatDialog({ onClose, onCreated }: NewChatDialogProps
             required
             value={repoUrl}
             onChange={(e) => setRepoUrl(e.target.value)}
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-signal/50"
             placeholder="https://github.com/org/repo.git"
           />
         </div>
 
         {error && (
-          <p role="alert" className="text-sm text-danger">
+          <p role="alert" className="text-sm text-critical">
             {error}
           </p>
         )}
@@ -89,14 +92,14 @@ export default function NewChatDialog({ onClose, onCreated }: NewChatDialogProps
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md px-3 py-2 text-sm text-muted hover:text-foreground hover:bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="rounded-md px-3 py-2 text-sm text-muted hover:text-foreground hover:bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-signal/50"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="rounded-md bg-nominal px-3 py-2 text-sm font-medium text-nominal-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-signal/50"
           >
             {submitting ? "Creating…" : "Create"}
           </button>

@@ -1,38 +1,136 @@
 @import "tailwindcss";
 
 /*
- * Kubernaut console theme: a single deliberate dark surface rather than a
- * light/dark toggle. The audience lives in terminals and kubectl output all
- * day, so the chrome borrows that vernacular — near-black panels, hairline
- * borders, a signal-green accent (status-healthy green, not brand blue) and
- * monospace for anything identifying (repo URLs, timestamps).
+ * Kubernaut console theme: a mission-control instrument panel, not a literal
+ * starfield. "Kubernetes" is Greek for helmsman; "-naut" is traveler/pilot —
+ * the product's own name already means "the one who pilots." The palette is
+ * coded like real telemetry (blue = navigation, teal = nominal/go, amber =
+ * standby, red = critical) rather than one bright accent on black.
  */
 :root {
-  --background: #0b0e14;
-  --panel: #11151c;
-  --border: #232937;
-  --foreground: #e6e9ef;
-  --muted: #7c8496;
-  --accent: #22d3a6;
-  --accent-foreground: #062019;
-  --danger: #f87171;
+  --background: #05070c;
+  --panel: #0b0f18;
+  --panel-raised: #10151f;
+  --border: #1c2436;
+  --foreground: #e8ecf5;
+  --muted: #7580a3;
+
+  --signal: #5b8cff;
+  --signal-foreground: #04070f;
+  --nominal: #38e1c4;
+  --nominal-foreground: #04211c;
+  --caution: #e8a33d;
+  --caution-foreground: #241503;
+  --critical: #ff5d5d;
+  --critical-foreground: #240707;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
   --color-border: var(--border);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-danger: var(--danger);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-nominal: var(--nominal);
+  --color-nominal-foreground: var(--nominal-foreground);
+  --color-caution: var(--caution);
+  --color-caution-foreground: var(--caution-foreground);
+  --color-critical: var(--critical);
+  --color-critical-foreground: var(--critical-foreground);
+
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-data);
+  --font-display: var(--font-display);
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -10%, #0d1220 0%, transparent 60%),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--signal) 35%, transparent);
+  color: var(--foreground);
+}
+
+/* Bracket "targeting" frame — used once, on the plan card that requires a
+   human decision, to mark it as the one place in the UI that authorizes a
+   real mutation. Two diagonal corners, not all four: a mark, not a box. */
+.hud-frame {
+  position: relative;
+}
+.hud-frame::before,
+.hud-frame::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  border-color: var(--caution);
+  opacity: 0.6;
+}
+.hud-frame::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid var(--caution);
+  border-left: 2px solid var(--caution);
+}
+.hud-frame::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid var(--caution);
+  border-right: 2px solid var(--caution);
+}
+
+/* Scanline sweep for the active telemetry row in ProgressTimeline — the
+   signature motion, spent in exactly one place. */
+@keyframes scan-sweep {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.telemetry-active {
+  position: relative;
+  overflow: hidden;
+}
+.telemetry-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--caution) 12%, transparent),
+    transparent
+  );
+  animation: scan-sweep 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -13,7 +13,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div>
       <div className="flex items-baseline gap-2 font-mono text-[11px]">
-        <span className={isUser ? "text-accent" : "text-muted"} aria-hidden="true">
+        <span className={isUser ? "text-signal" : "text-nominal"} aria-hidden="true">
           {isUser ? ">" : "#"}
         </span>
         <span className={isUser ? "text-foreground" : "text-muted"}>{label}</span>
@@ -23,7 +23,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
       </div>
       <div
         className={`mt-1 whitespace-pre-wrap rounded-md border px-4 py-3 text-sm leading-relaxed text-foreground ${
-          isUser ? "border-accent/25 bg-accent/[0.06]" : "border-border bg-panel"
+          isUser ? "border-signal/25 bg-signal/[0.06]" : "border-border bg-panel"
         }`}
       >
         {message.content}
