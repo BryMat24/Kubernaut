@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ProgressEvent } from "@/lib/api";
 
 interface ProgressTimelineProps {
@@ -7,9 +8,9 @@ interface ProgressTimelineProps {
 }
 
 const PHASE_LABELS: Record<ProgressEvent["phase"], string> = {
-  diagnosis: "Diagnosis",
-  planner: "Planning",
-  remediation: "Remediation",
+  diagnosis: "Diagnostic scan",
+  planner: "Trajectory plan",
+  remediation: "Course correction",
 };
 
 interface PhaseRow {
@@ -36,7 +37,22 @@ function reduceToPhaseRows(events: ProgressEvent[]): PhaseRow[] {
   return order.map((phase) => byPhase.get(phase)!);
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `T+${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export default function ProgressTimeline({ events }: ProgressTimelineProps) {
+  const [startedAt] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
   const rows = reduceToPhaseRows(events);
 
   if (rows.length === 0) {
@@ -44,17 +60,32 @@ export default function ProgressTimeline({ events }: ProgressTimelineProps) {
   }
 
   return (
-    <ol aria-live="polite" className="space-y-1.5 font-mono text-xs">
-      {rows.map((row) => (
-        <li key={row.phase} className="flex items-start gap-2">
-          <span aria-hidden="true" className={row.done ? "text-accent" : "text-accent animate-pulse"}>
-            {row.done ? "✓" : "⋯"}
-          </span>
-          <span className="text-muted">
-            <span className="text-foreground/70">{PHASE_LABELS[row.phase]}:</span> {row.message}
-          </span>
-        </li>
-      ))}
-    </ol>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
+        <span>Telemetry</span>
+        <span className="text-caution">{formatElapsed(elapsed)}</span>
+      </div>
+      <ol aria-live="polite" className="space-y-1">
+        {rows.map((row) => (
+          <li
+            key={row.phase}
+            className={`flex items-start gap-2 rounded px-1.5 py-1 font-mono text-xs ${
+              row.done ? "" : "telemetry-active"
+            }`}
+          >
+            <span aria-hidden="true" className={row.done ? "text-nominal" : "text-caution"}>
+              {row.done ? "[✓]" : "[~]"}
+            </span>
+            <span className="text-muted">
+              <span className="font-display uppercase tracking-wide text-foreground/80">
+                {PHASE_LABELS[row.phase]}
+              </span>
+              {" — "}
+              {row.message}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

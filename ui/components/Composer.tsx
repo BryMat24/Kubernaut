@@ -23,8 +23,8 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
       <label htmlFor="composer-input" className="sr-only">
         Message the assistant
       </label>
-      <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 focus-within:ring-2 focus-within:ring-accent/50">
-        <span className="font-mono text-sm text-accent" aria-hidden="true">
+      <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 focus-within:ring-2 focus-within:ring-signal/50">
+        <span className="font-display text-sm text-signal" aria-hidden="true">
           ›
         </span>
         <input
@@ -38,7 +38,7 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
         <button
           type="submit"
           disabled={disabled || !value.trim()}
-          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-accent/50"
+          className="rounded-md bg-nominal px-3 py-1.5 text-xs font-medium text-nominal-foreground hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-signal/50"
         >
           {disabled ? "Thinking…" : "Send"}
         </button>

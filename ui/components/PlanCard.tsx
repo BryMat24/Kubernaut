@@ -49,17 +49,17 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
     <section
       aria-label="Remediation plan pending approval"
       aria-busy={submitting}
-      className="rounded-md border border-amber-500/30 bg-amber-500/[0.08] px-4 py-3 text-sm text-amber-100"
+      className="hud-frame rounded-md border border-caution/30 bg-caution/[0.06] px-4 py-3 text-sm text-foreground"
     >
-      <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-amber-300/80">
+      <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-caution">
         <span aria-hidden="true">»</span>
-        <span>Awaiting approval</span>
+        <span>Authorization required</span>
       </div>
 
-      <p className="mt-1.5 leading-relaxed text-amber-100">{plan.summary}</p>
+      <p className="mt-1.5 leading-relaxed text-foreground/90">{plan.summary}</p>
 
       {plan.steps.length === 0 ? (
-        <p className="mt-3 font-mono text-xs text-amber-300/70">
+        <p className="mt-3 font-mono text-xs text-muted">
           No file changes are included in this plan.
         </p>
       ) : (
@@ -72,7 +72,7 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
               <div className="flex items-center gap-2 border-b border-border bg-panel px-3 py-2">
                 <span
                   aria-hidden="true"
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent/40 font-mono text-[10px] text-accent"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-signal/40 font-mono text-[10px] text-signal"
                 >
                   {step.step_number}
                 </span>
@@ -92,7 +92,7 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
       )}
 
       {error && (
-        <p role="alert" className="mt-3 text-sm text-danger">
+        <p role="alert" className="mt-3 text-sm text-critical">
           {error}
         </p>
       )}
@@ -103,7 +103,7 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
           onClick={() => handleDecision(true)}
           disabled={submitting}
           aria-label="Approve remediation plan"
-          className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-accent/50"
+          className="rounded-md bg-nominal px-3 py-2 text-sm font-medium text-nominal-foreground hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-signal/50"
         >
           {pendingAction === "approve" ? "Approving…" : "Approve"}
         </button>
@@ -112,7 +112,7 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
           onClick={() => handleDecision(false)}
           disabled={submitting}
           aria-label="Reject remediation plan"
-          className="rounded-md border border-border px-3 py-2 text-sm font-medium text-muted hover:border-danger/40 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-danger/40"
+          className="rounded-md border border-border px-3 py-2 text-sm font-medium text-muted hover:border-critical/40 hover:text-critical disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-critical/40"
         >
           {pendingAction === "reject" ? "Rejecting…" : "Reject"}
         </button>
