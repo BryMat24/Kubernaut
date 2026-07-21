@@ -1,0 +1,19 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+
+# Not needed in the api image — the UI ships its own image (ui/Dockerfile),
+# and the MCP servers ship theirs (mcp_servers/*/Dockerfile).
+ui
+mcp_servers
+test
+test_app
+docs
+.superpowers
+
+*.md
+plan.md
+PLAN.md
