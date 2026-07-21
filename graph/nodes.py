@@ -1,5 +1,6 @@
 from typing import Literal
 
+from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
 from agents import DiagnosisAgent, PlannerAgent, RemediationAgent
 from graph.state import OrchestratorState
@@ -7,12 +8,16 @@ from graph.state import OrchestratorState
 
 def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
     async def diagnose_node(state: OrchestratorState) -> dict:
+        writer = get_stream_writer()
+        writer({"phase": "diagnosis", "status": "started", "message": "Investigating the cluster…"})
         result = await diagnosis_agent.ainvoke({
             "messages": [],
             "query": state["query"],
             "iteration_count": 0,
         })
-        return {"diagnosis_result": result["diagnosis_result"]}
+        diagnosis_result = result["diagnosis_result"]
+        writer({"phase": "diagnosis", "status": "completed", "message": diagnosis_result.summary})
+        return {"diagnosis_result": diagnosis_result}
 
     return diagnose_node
 
@@ -29,6 +34,8 @@ def require_remediation_routing_node(state: OrchestratorState) -> Literal["plann
 
 def make_planner_node(planner_agent: PlannerAgent):
     async def planner_node(state: OrchestratorState) -> dict:
+        writer = get_stream_writer()
+        writer({"phase": "planner", "status": "started", "message": "Building a remediation plan…"})
         result = await planner_agent.ainvoke({
             "messages": [],
             "diagnosis_result": state["diagnosis_result"],
@@ -38,7 +45,10 @@ def make_planner_node(planner_agent: PlannerAgent):
             "repo_path": "",
             "branch": "",
         })
-        return {"plan": result["plan"]}
+        plan = result["plan"]
+        completed_message = plan.summary if plan.planning_success else "Could not produce a safe plan."
+        writer({"phase": "planner", "status": "completed", "message": completed_message})
+        return {"plan": plan}
 
     return planner_node
 
@@ -61,6 +71,8 @@ def approval_routing(state: OrchestratorState) -> Literal["remediation_agent", "
 
 def make_remediate_node(remediation_agent: RemediationAgent):
     async def remediate_node(state: OrchestratorState) -> dict:
+        writer = get_stream_writer()
+        writer({"phase": "remediation", "status": "started", "message": "Applying the fix…"})
         result = await remediation_agent.ainvoke({
             "messages": [],
             "plan": state["plan"],
@@ -73,9 +85,12 @@ def make_remediate_node(remediation_agent: RemediationAgent):
             "repo_path": "",
             "branch": "",
         })
+        eval_passed = result.get("eval_passed", False)
+        completed_message = "Fix applied." if eval_passed else "Fix did not pass evaluation."
+        writer({"phase": "remediation", "status": "completed", "message": completed_message})
         return {
             "pr_url": result.get("pr_url", ""),
-            "eval_passed": result.get("eval_passed", False),
+            "eval_passed": eval_passed,
             "eval_reasoning": result.get("eval_reasoning", ""),
         }
 
