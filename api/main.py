@@ -156,36 +156,62 @@ async def approve(thread_id: str, decision: ApprovalDecision, db: AsyncSession =
             select(Message).where(Message.thread_id == thread_id).order_by(Message.created_at.desc())
         )
     ).scalars().first()
-    chat_id = pending_message.chat_id if pending_message else None
+    pending_message_id = pending_message.id if pending_message else None
+    approved = decision.approved
+    edited_plan = decision.edited_plan
 
-    result = await graph.ainvoke(
-        Command(resume={"approved": decision.approved, "edited_plan": decision.edited_plan}),
-        config=config,
-    )
+    async def event_generator():
+        final_values: dict = {}
+        try:
+            async for mode, chunk in graph.astream(
+                Command(resume={"approved": approved, "edited_plan": edited_plan}),
+                config=config,
+                stream_mode=["custom", "values"],
+            ):
+                if mode == "custom":
+                    yield _sse_event({"type": "progress", **chunk})
+                else:
+                    final_values = chunk
+        except Exception as exc:
+            yield _sse_event({"type": "error", "message": str(exc)})
+            return
 
-    if "__interrupt__" in result:
-        # e.g. planner_agent hits another interrupt downstream, or a second approval gate
-        payload = result["__interrupt__"][0].value
-        if chat_id is not None:
-            db.add(Message(
-                chat_id=chat_id,
-                role=MessageRole.ASSISTANT,
-                content="Another approval is required.",
-                thread_id=thread_id,
-            ))
-            await db.commit()
-        return {"status": "pending_approval", "thread_id": thread_id, "payload": payload}
+        if "__interrupt__" in final_values:
+            # e.g. planner_agent hits another interrupt downstream, or a second approval gate
+            payload = final_values["__interrupt__"][0].value
+            if pending_message_id is not None:
+                async with AsyncSessionLocal() as gen_db:
+                    msg = await gen_db.get(Message, pending_message_id)
+                    if msg is not None:
+                        msg.content = "Another approval is required."
+                        await gen_db.commit()
+            yield _sse_event({
+                "type": "final",
+                "status": "pending_approval",
+                "thread_id": thread_id,
+                "payload": payload,
+            })
+            return
 
-    if chat_id is not None:
-        if decision.approved:
-            pr_url = result.get("pr_url")
-            content = f"Opened PR: {pr_url}" if pr_url else "Approved, but no PR was opened — see eval_reasoning."
-        else:
-            content = "Remediation was not approved."
-        db.add(Message(chat_id=chat_id, role=MessageRole.ASSISTANT, content=content, thread_id=thread_id))
-        await db.commit()
+        if pending_message_id is not None:
+            diagnosis = final_values.get("diagnosis_result")
+            plan = final_values.get("plan")
+            pr_url = final_values.get("pr_url")
+            if diagnosis is not None:
+                async with AsyncSessionLocal() as gen_db:
+                    msg = await gen_db.get(Message, pending_message_id)
+                    if msg is not None:
+                        msg.content = build_summary_message(diagnosis, plan, approved=approved, pr_url=pr_url)
+                        await gen_db.commit()
 
-    return {"status": "complete", "thread_id": thread_id, "result": result}
+        yield _sse_event({
+            "type": "final",
+            "status": "complete",
+            "thread_id": thread_id,
+            "result": final_values,
+        })
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @app.get("/chats/{chat_id}/messages")
