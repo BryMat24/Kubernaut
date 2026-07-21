@@ -253,6 +253,16 @@ def test_edit_file_replaces_all_occurrences(tmp_path: Path):
     assert target.read_text() == "test2\ntest2\ntest2\n"
 
 
+def test_edit_file_no_op_when_old_and_new_content_are_identical(tmp_path: Path):
+    target = tmp_path / "deployment.yaml"
+    target.write_text("replicas: 1\nport: 5678\n")
+
+    result = edit_file.func(str(tmp_path), "deployment.yaml", "port: 5678", "port: 5678")
+
+    assert result == 'No changes: replacing that text in "deployment.yaml" would not change the file, edit skipped'
+    assert target.read_text() == "replicas: 1\nport: 5678\n"
+
+
 def test_edit_file_old_content_not_found(tmp_path: Path):
     target = tmp_path / "a.txt"
     target.write_text("original content")
@@ -299,6 +309,16 @@ def test_write_file_overwrites_existing_file(tmp_path: Path):
 
     assert "Successfully wrote" in result
     assert target.read_text() == "new content"
+
+
+def test_write_file_no_op_when_content_already_matches(tmp_path: Path):
+    target = tmp_path / "existing.yaml"
+    target.write_text("same content")
+
+    result = write_file.func(str(tmp_path), "existing.yaml", "same content")
+
+    assert result == 'No changes: "existing.yaml" already matches this content, write skipped'
+    assert target.read_text() == "same content"
 
 
 def test_write_file_outside_working_directory(tmp_path: Path):

@@ -15,7 +15,7 @@ from utils import (
     remove_task_worktree,
     repo_lock,
 )
-from .helpers import DiffEvaluator
+from .helpers import DiffEvaluator, HistoryCompactor
 from graph.state import RemediationAgentState
 from models import RemediationPlan
 import logging
@@ -33,6 +33,7 @@ class RemediationAgent:
         self.tools = tools
         self.graph = self._build_graph()
         self.llm_as_judge = DiffEvaluator(llm_judge)
+        self.history_compactor = HistoryCompactor(llm)
         self.logger = logging.getLogger("remediation_agent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""
@@ -130,22 +131,34 @@ class RemediationAgent:
         self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
         plan = state["plan"]
-        completed = set(state.get("completed_steps", []))
+        if state.get("eval_passed") is False:
+            # The most recent evaluation rejected the diff as a whole -- the judge doesn't
+            # attribute failures to individual steps, so nothing is trusted as confirmed
+            # complete until a fresh evaluation runs again, regardless of disk content.
+            completed: set[int] = set()
+        else:
+            files = get_changed_files(state["repo_path"])
+            completed = set(self._steps_completed_from_files(state["repo_path"], files, plan))
         remaining = [s.step_number for s in plan.steps if s.step_number not in completed]
         progress = f"\n\nSteps completed: {sorted(completed)}. Steps remaining: {remaining}." if plan.steps else ""
 
         system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ntask:\n{self._task_description(plan)}{progress}"
 
-        messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        history, compaction_edits = self.history_compactor.compact(state["messages"])
+        messages = [SystemMessage(content=system_prompt)] + history
         response = self.llm.invoke(messages)
 
         if response.tool_calls:
             for call in response.tool_calls:
                 self.logger.info(f"  agent -> {call['name']}({call['args']})")
 
+        if compaction_edits:
+            self.logger.info(f"  compacted {len(compaction_edits) - 1} old messages into a summary")
+
         return {
-            "messages": [response],
+            "messages": [*compaction_edits, response],
             "iteration_count": iteration,
+            "completed_steps": sorted(completed),
         }
 
     def _tool_node(self, state: RemediationAgentState) -> dict[str, Any]:
@@ -169,7 +182,7 @@ class RemediationAgent:
         files = get_changed_files(state["repo_path"])
         self.logger.info(f"  changed files: {files}")
 
-        completed_steps = [s.step_number for s in state["plan"].steps if s.file_path in files]
+        completed_steps = self._steps_completed_from_files(state["repo_path"], files, state["plan"])
         self.logger.info(f"  completed steps: {completed_steps}")
 
         if not files:
@@ -247,6 +260,25 @@ class RemediationAgent:
         except Exception as e:
             self.logger.info(f"  failed to open PR: {e}")
             return {"messages": [AIMessage(content=f"Failed to open PR: {e}")]}
+
+    @staticmethod
+    def _steps_completed_from_files(repo_path: str, files: list[str], plan: RemediationPlan) -> list[int]:
+        changed = set(files)
+        completed: list[int] = []
+        file_cache: dict[str, str] = {}
+        for step in plan.steps:
+            if step.file_path not in changed:
+                continue
+            if step.file_path not in file_cache:
+                try:
+                    with open(os.path.join(repo_path, step.file_path), "r", encoding="utf-8") as f:
+                        file_cache[step.file_path] = f.read()
+                except OSError:
+                    file_cache[step.file_path] = ""
+            target = step.new_content.strip()
+            if target and target in file_cache[step.file_path]:
+                completed.append(step.step_number)
+        return completed
 
     @staticmethod
     def _task_description(plan: RemediationPlan) -> str:
