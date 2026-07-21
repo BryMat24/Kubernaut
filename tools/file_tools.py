@@ -156,9 +156,12 @@ def edit_file(
         if old_content not in content:
             return f'Error: old_content not found in "{file_path}"'
 
-        content = content.replace(old_content, new_content)
+        updated_content = content.replace(old_content, new_content)
+        if updated_content == content:
+            return f'No changes: replacing that text in "{file_path}" would not change the file, edit skipped'
+
         with open(abs_file_path, "w", encoding="utf-8") as file:
-            file.write(content)
+            file.write(updated_content)
         return f'Successfully edited "{file_path}"'
     except Exception as e:
         return f"Error editing file: {e}"
@@ -181,6 +184,14 @@ def write_file(
             return f"Error: creating directory: {e}"
     if os.path.exists(abs_file_path) and os.path.isdir(abs_file_path):
         return f'Error: "{file_path}" is a directory, not a file'
+
+    if os.path.isfile(abs_file_path):
+        try:
+            with open(abs_file_path, "r") as f:
+                if f.read() == content:
+                    return f'No changes: "{file_path}" already matches this content, write skipped'
+        except Exception:
+            pass
 
     try:
         with open(abs_file_path, "w") as f:
