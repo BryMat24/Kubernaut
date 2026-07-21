@@ -4,14 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChatMessage,
+  ProgressEvent,
   RemediationPlan,
-  diagnose,
+  streamDiagnose,
   getChatMessages,
   ApiError,
 } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import Composer from "@/components/Composer";
 import PlanCard from "@/components/PlanCard";
+import ProgressTimeline from "@/components/ProgressTimeline";
 
 export type TimelineItem =
   | { kind: "message"; id: string; message: ChatMessage }
@@ -25,6 +27,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
   const [items, setItems] = useState<TimelineItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -57,7 +60,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [items]);
+  }, [items, progressEvents]);
 
   async function handleSend(query: string) {
     const localId = `local-${Date.now()}`;
@@ -76,9 +79,12 @@ export default function ChatView({ chatId }: ChatViewProps) {
       },
     ]);
     setSending(true);
+    setProgressEvents([]);
     setError(null);
     try {
-      const response = await diagnose(query, chatId);
+      const response = await streamDiagnose(query, chatId, (event) => {
+        setProgressEvents((prev) => [...prev, event]);
+      });
       if (response.status === "pending_approval" && response.plan) {
         setItems((prev) => [
           ...prev,
@@ -110,6 +116,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
       setError(err instanceof ApiError ? err.message : "Failed to send message");
     } finally {
       setSending(false);
+      setProgressEvents([]);
     }
   }
 
@@ -166,9 +173,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
           )
         )}
 
-        {sending && (
-          <p className="font-mono text-xs text-muted animate-pulse">kubernaut is thinking…</p>
-        )}
+        {sending && <ProgressTimeline events={progressEvents} />}
 
         {error && (
           <p role="alert" className="text-sm text-danger">
