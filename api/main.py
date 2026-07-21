@@ -1,19 +1,22 @@
 from contextlib import asynccontextmanager
 from uuid import UUID
+import json
 import os
 import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.database import get_db_session, init_models
+from api.database import AsyncSessionLocal, get_db_session, init_models
 from api.orm import Chat, Message, MessageRole
 from api.schemas import ApprovalDecision, ChatCreateRequest, DiagnoseRequest
+from api.summary import build_summary_message
 from graph.builder import build_graph
 from models import DiagnosisResult, RemediationPlan
 from models.eval_result import EvalResult
@@ -46,6 +49,19 @@ app.add_middleware(
 )
 
 
+def _json_default(obj):
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return str(obj)
+
+
+def _sse_event(payload: dict) -> str:
+    return f"data: {json.dumps(payload, default=_json_default)}\n\n"
+
+
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
 @app.post("/chats")
 async def create_chat(body: ChatCreateRequest, db: AsyncSession = Depends(get_db_session)):
     chat = Chat(title=body.title, repo_url=body.repo_url)
@@ -68,33 +84,62 @@ async def start_diagnosis(body: DiagnoseRequest, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail=f"unknown chat_id: {body.chat_id}")
 
     db.add(Message(chat_id=chat.id, role=MessageRole.USER, content=body.query))
-
-    thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
-    result = await app.state.graph.ainvoke(
-        {"query": body.query, "repo_url": chat.repo_url}, config=config
-    )
-
-    if "__interrupt__" in result:
-        interrupt_payload = result["__interrupt__"][0].value
-        diagnosis = interrupt_payload["diagnosis"]
-        plan = interrupt_payload["plan"]
-        summary = f"{diagnosis.summary}\n\nProposed plan: {plan.summary}\n\n(Awaiting your approval)"
-        db.add(Message(chat_id=chat.id, role=MessageRole.ASSISTANT, content=summary, thread_id=thread_id))
-        await db.commit()
-        return {
-            "status": "pending_approval",
-            "thread_id": thread_id,
-            "chat_id": str(chat.id),
-            "plan": plan,
-        }
-
-    diagnosis_result = result.get("diagnosis_result")
-    answer = diagnosis_result.summary if diagnosis_result else "(no diagnosis result)"
-    db.add(Message(chat_id=chat.id, role=MessageRole.ASSISTANT, content=answer, thread_id=thread_id))
     await db.commit()
 
-    return {"status": "complete", "thread_id": thread_id, "chat_id": str(chat.id), "result": result}
+    thread_id = str(uuid.uuid4())
+    chat_id = chat.id
+    repo_url = chat.repo_url
+    query = body.query
+    graph = app.state.graph
+
+    async def event_generator():
+        config = {"configurable": {"thread_id": thread_id}}
+        final_values: dict = {}
+        try:
+            async for mode, chunk in graph.astream(
+                {"query": query, "repo_url": repo_url}, config=config, stream_mode=["custom", "values"]
+            ):
+                if mode == "custom":
+                    yield _sse_event({"type": "progress", **chunk})
+                else:
+                    final_values = chunk
+        except Exception as exc:
+            yield _sse_event({"type": "error", "message": str(exc)})
+            return
+
+        # A fresh session, not the request-scoped `db`: this generator runs after the
+        # endpoint function has already returned the StreamingResponse, potentially
+        # minutes later — the injected dependency's lifetime shouldn't be relied on here.
+        async with AsyncSessionLocal() as gen_db:
+            if "__interrupt__" in final_values:
+                interrupt_payload = final_values["__interrupt__"][0].value
+                diagnosis = interrupt_payload["diagnosis"]
+                plan = interrupt_payload["plan"]
+                summary = build_summary_message(diagnosis, plan, approved=None)
+                gen_db.add(Message(chat_id=chat_id, role=MessageRole.ASSISTANT, content=summary, thread_id=thread_id))
+                await gen_db.commit()
+                yield _sse_event({
+                    "type": "final",
+                    "status": "pending_approval",
+                    "thread_id": thread_id,
+                    "chat_id": str(chat_id),
+                    "plan": plan,
+                })
+                return
+
+            diagnosis_result = final_values.get("diagnosis_result")
+            answer = build_summary_message(diagnosis_result) if diagnosis_result else "(no diagnosis result)"
+            gen_db.add(Message(chat_id=chat_id, role=MessageRole.ASSISTANT, content=answer, thread_id=thread_id))
+            await gen_db.commit()
+            yield _sse_event({
+                "type": "final",
+                "status": "complete",
+                "thread_id": thread_id,
+                "chat_id": str(chat_id),
+                "result": final_values,
+            })
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @app.post("/approve/{thread_id}")
