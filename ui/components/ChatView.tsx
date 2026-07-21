@@ -96,7 +96,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
           },
         ]);
       } else {
-        const summary = response.result?.diagnosis_result?.summary ?? "(no diagnosis result)";
+        const summary = response.message ?? response.result?.diagnosis_result?.summary ?? "(no diagnosis result)";
         setItems((prev) => [
           ...prev,
           {

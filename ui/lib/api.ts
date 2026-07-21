@@ -39,6 +39,7 @@ export interface DiagnoseResponse {
   thread_id: string;
   chat_id: string;
   plan?: RemediationPlan;
+  message?: string;
   result?: { diagnosis_result?: { summary: string }; pr_url?: string };
 }
 
@@ -46,6 +47,7 @@ export interface ApproveResponse {
   status: "pending_approval" | "complete";
   thread_id: string;
   payload?: { diagnosis: unknown; plan: RemediationPlan };
+  message?: string;
   result?: { pr_url?: string; [key: string]: unknown };
 }
 

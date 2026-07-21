@@ -137,6 +137,7 @@ async def start_diagnosis(body: DiagnoseRequest, db: AsyncSession = Depends(get_
                 "thread_id": thread_id,
                 "chat_id": str(chat_id),
                 "result": final_values,
+                "message": answer,
             })
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
@@ -193,15 +194,17 @@ async def approve(thread_id: str, decision: ApprovalDecision, db: AsyncSession =
             })
             return
 
+        message_text = None
         if pending_message_id is not None:
             diagnosis = final_values.get("diagnosis_result")
             plan = final_values.get("plan")
             pr_url = final_values.get("pr_url")
             if diagnosis is not None:
+                message_text = build_summary_message(diagnosis, plan, approved=approved, pr_url=pr_url)
                 async with AsyncSessionLocal() as gen_db:
                     msg = await gen_db.get(Message, pending_message_id)
                     if msg is not None:
-                        msg.content = build_summary_message(diagnosis, plan, approved=approved, pr_url=pr_url)
+                        msg.content = message_text
                         await gen_db.commit()
 
         yield _sse_event({
@@ -209,6 +212,7 @@ async def approve(thread_id: str, decision: ApprovalDecision, db: AsyncSession =
             "status": "complete",
             "thread_id": thread_id,
             "result": final_values,
+            "message": message_text,
         })
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)

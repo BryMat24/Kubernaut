@@ -27,13 +27,12 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
       });
       if (response.status === "complete") {
         const prUrl = response.result?.pr_url ?? null;
-        onResolved(
-          approved
-            ? prUrl
-              ? `Opened PR: ${prUrl}`
-              : "Approved, but no PR was opened."
-            : "Remediation was not approved."
-        );
+        const fallback = approved
+          ? prUrl
+            ? `Opened PR: ${prUrl}`
+            : "Approved, but no PR was opened."
+          : "Remediation was not approved.";
+        onResolved(response.message ?? fallback);
       } else {
         onResolved("Another approval is required.");
       }
