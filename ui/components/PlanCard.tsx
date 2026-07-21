@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { RemediationPlan, approve as approveRequest, ApiError } from "@/lib/api";
+import { ProgressEvent, RemediationPlan, streamApprove, ApiError } from "@/lib/api";
+import ProgressTimeline from "@/components/ProgressTimeline";
 
 interface PlanCardProps {
   threadId: string;
@@ -13,13 +14,17 @@ type PendingAction = "approve" | "reject" | null;
 
 export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function handleDecision(approved: boolean) {
     setPendingAction(approved ? "approve" : "reject");
+    setProgressEvents([]);
     setError(null);
     try {
-      const response = await approveRequest(threadId, approved);
+      const response = await streamApprove(threadId, approved, (event) => {
+        setProgressEvents((prev) => [...prev, event]);
+      });
       if (response.status === "complete") {
         const prUrl = response.result?.pr_url ?? null;
         onResolved(
@@ -35,6 +40,7 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to submit decision");
       setPendingAction(null);
+      setProgressEvents([]);
     }
   }
 
@@ -78,6 +84,12 @@ export default function PlanCard({ threadId, plan, onResolved }: PlanCardProps) 
             </li>
           ))}
         </ol>
+      )}
+
+      {submitting && (
+        <div className="mt-3 rounded-md border border-border bg-background px-3 py-2">
+          <ProgressTimeline events={progressEvents} />
+        </div>
       )}
 
       {error && (
@@ -132,7 +144,7 @@ function CodeBlock({ content, filePath }: { content: string; filePath: string })
             <span aria-hidden="true" className="select-none text-right text-muted/40">
               {i + 1}
             </span>
-            <span className="whitespace-pre-wrap break-all">{line.length > 0 ? line : " "}</span>
+            <span className="whitespace-pre-wrap break-all">{line.length > 0 ? line : " "}</span>
           </span>
         ))}
       </code>
