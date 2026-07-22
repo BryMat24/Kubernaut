@@ -32,7 +32,7 @@ pytestmark = pytest.mark.integration
 
 CASES_DIR = Path(__file__).parent / "cases" / "scheduling_failures"
 NODE_NAME = "kind-control-plane"
-MCP_SERVER_DIR = Path(__file__).parents[3] / "mcp_servers" / "k8s_mcp_server"
+MCP_SERVER_DIR = Path(__file__).parents[2] / "mcp_servers" / "k8s_mcp_server"
 
 
 @pytest.fixture(scope="session")

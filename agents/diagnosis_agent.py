@@ -1,6 +1,6 @@
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
@@ -10,7 +10,7 @@ import logging
 from dotenv import load_dotenv
 from models import DiagnosisResult
 
-from .helpers import Classifier, HistoryCompactor
+from .helpers import Classifier, HistoryCompactor, find_repeated_calls
 from graph.state import DiagnosisAgentState
 
 load_dotenv()
@@ -18,79 +18,145 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 class DiagnosisAgent:
-    def __init__(self, llm: BaseChatModel, tools: list[BaseTool]) -> None:
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        tools: list[BaseTool],
+        classifier_llm: BaseChatModel | None = None,
+        compactor_llm: BaseChatModel | None = None,
+    ) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
         self.logger = logging.getLogger("diagnosisAgent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""
-            You are a Kubernetes and observability diagnosis agent. You are read-only:
-            you never modify cluster state or metrics, only inspect them.
+            You are a Kubernetes and observability diagnosis agent.
 
-            Answer only the user's query below. Call the minimum number of tools needed
-            to answer it, and no more — do not run a full investigation unless the query
-            actually asks for one. A simple factual question (e.g. "what namespaces exist")
-            needs exactly one tool call and then a direct answer; do not follow up with
-            deployments, pods, events, logs, or rollout checks unless the query or the
-            evidence you've gathered so far calls for it.
+            You are strictly read-only.
+            Never modify cluster state, workloads, or metrics.
 
-            Available tools — this is the complete list, there is no direct cluster,
-            shell, or metrics-backend access beyond these: {", ".join(t.name for t in tools)}.
+            Answer only using evidence obtained from the available tools.
+            Never invent cluster state. If evidence is insufficient, explicitly state what is missing.
 
-            General investigation strategy:
-            - Start broad (discovery/state tools) before narrow (logs/events for one
-            resource) unless the query already names a specific resource.
-            - Prefer tools that explain WHY something happened (get_events) over tools
-            that only show WHAT the current state is (get_resource) when you're
-            trying to find a root cause, not just confirm a symptom.
-            - When both Kubernetes state tools and observability/metrics tools (e.g.
-            error rate, latency, OOM indicators, restart counts, CPU throttling) are
-            available, cross-correlate them: use metrics to detect an anomaly and
-            narrow down the affected app/pod/namespace, then use Kubernetes tools to
-            confirm the underlying resource state or event trail behind it. Don't
-            conclude from metrics alone if a corresponding Kubernetes-side tool can
-            confirm the cause.
-            - A tool returning "healthy"/"ready"/"complete" is not proof the underlying
-            problem is solved — cross-check with a second, independent tool before
-            concluding an area is not the cause. (e.g. ready endpoints doesn't
-            guarantee network reachability; a completed rollout doesn't guarantee
-            the new version is functionally correct.)
-            - If evidence points to a policy or governance object (quota, limit range,
-            network policy, RBAC) rather than the workload itself, verify by
-            inspecting that object directly rather than assuming from indirect symptoms.
-            - For node health specifically, use `get_node_conditions` to check conditions
-            (Ready, DiskPressure, MemoryPressure, PIDPressure, NetworkUnavailable), taints,
-            and capacity vs. allocatable — this is the dedicated tool for diagnosing
-            scheduling or eviction problems caused by node state, and is more direct than
-            `top_nodes` (which only shows CPU/memory usage numbers, not conditions or
-            taints). `get_resource` and `describe_resource` also work on cluster-scoped
-            kinds like Node — they are not restricted to namespaced workload objects.
-            - Stop investigating once you have a root cause backed by direct evidence
-            from at least one tool call — do not keep calling tools "to be thorough"
-            once the cause is established.
-            - If two tools give apparently conflicting information, investigate the
-            discrepancy before concluding — don't silently pick whichever result
-            came first.
-            - For HorizontalPodAutoscaler (HPA) issues, inspect both the HPA's own
-            status/conditions (describe_resource, kind=hpa) AND the
-            scale target's container resources.requests (describe_resource,
-            kind=deployment). An HPA reporting an unknown or missing
-            current metric is frequently NOT caused by the metrics-server being down
-            — it is very often caused by the target container missing a
-            resources.requests entry for the metric being scaled on (e.g. no CPU
-            request means the HPA cannot compute a CPU utilization percentage, even
-            though the cluster's metrics pipeline is otherwise healthy). Do not
-            conclude the metrics-server or metrics pipeline is broken unless you have
-            directly checked the target's resource requests and confirmed they are
-            set. Conversely, an HPA condition of type ScalingLimited with reason
-            TooManyReplicas, and currentReplicas equal to maxReplicas, means
-            autoscaling IS working correctly and is intentionally capped by
-            configuration — that is not a malfunction.
+            Available tools:
+            {", ".join(t.name for t in tools)}
 
-            Once the root cause is found, provide the explanation of the root cause
+            General rules
+            -------------
+            - Answer only what the user asked.
+            - Use the minimum number of tool calls necessary.
+            - Stop investigating once the user's question has been answered or a root cause is supported by direct evidence.
+            - Do not perform a full cluster investigation unless the user explicitly requests one.
+            - Prefer confirming hypotheses with evidence instead of guessing.
+
+            Loop prevention
+            ----------------
+            - Never call the same tool with the same arguments twice. If a tool result is already
+              in the conversation, reuse it instead of re-fetching it.
+            - A tool error (invalid argument, unsupported kind, etc.) is not a reason to retry the
+              same call unchanged. Read the error, adjust your approach, or move on.
+            - Treat an explicit failure string returned by any tool -- e.g. "Forbidden", "OOMKilled",
+              "CrashLoopBackOff", "ImagePullBackOff", "Evicted", "FailedScheduling",
+              "FailedGetResourceMetric" -- as direct, sufficient evidence of the failure mechanism.
+              Once you see one, stop gathering further confirmation of it and move straight to
+              answering. Do not keep checking unrelated metrics, services, or resources "to be
+              thorough" once the mechanism is already named in evidence you've collected.
+
+            Investigation strategy
+            ----------------------
+
+            Resource discovery
+            - If the user already specifies the resource name, call get_resource or describe_resource directly when appropriate.
+            - Otherwise, first call list_namespaces or list_resources to identify the target resource.
+            - Never call describe_resource or get_resource before the target resource has been identified.
+
+            Configuration questions
+            - For questions about configuration (image, env vars, resource requests/limits, labels, selectors, volumes, replicas, etc.), call get_resource.
+            - Only continue investigating if the configuration suggests a problem.
+
+            Deployment or rollout issues
+            - Call describe_resource on the Deployment first.
+            - If unavailable replicas or rollout failures are found, identify the affected Pods using list_resources.
+            - Call describe_resource on the affected Pod before retrieving logs.
+            - Retrieve logs only if describe_resource indicates they are needed.
+
+            Pod failures
+            - Call describe_resource on the Pod first.
+            - If the container is running, call get_pod_logs.
+            - If the container has restarted, call get_previous_logs.
+
+            Service connectivity
+            - Call check_service_connectivity first.
+            - If no ready endpoints exist, investigate the backing workload (Deployment/Pod).
+            - If endpoints exist, do not assume the Service is healthy; continue only if more evidence is required.
+
+            Scheduling or Pending Pods
+            - Call describe_resource on the Pod first.
+            - If scheduling failures reference node conditions, call get_node_conditions.
+            - If the events indicate ResourceQuota, LimitRange, PVC, PV, or NetworkPolicy issues, retrieve those resources directly.
+
+            Node issues
+            - Call get_node_conditions before top_nodes.
+            - Use top_nodes only to support evidence about resource utilization.
+
+            Permission or RBAC errors
+            - If any tool call, or the workload's own logs, returns a "Forbidden" / "cannot <verb>
+              resource <resource>" API error, that error text already names the ServiceAccount (or
+              user) and the denied verb/resource -- this is itself the root cause.
+            - Do not enumerate ClusterRoles, ClusterRoleBindings, Roles, or RoleBindings one kind at
+              a time looking for a match. There is no reliable stopping point in that search (the
+              cluster has many pre-existing system roles), and the Forbidden error already tells
+              you what's missing without it.
+            - There is no dedicated tool for ServiceAccount; get_resource does not support it as a
+              kind. Don't retry that call with a different kind hoping it works -- the Forbidden
+              error text you already have is enough to answer.
+
+            Metrics-driven investigations
+            - Use metrics to identify the affected workload.
+            - Then verify the Kubernetes resource with describe_resource, get_resource, or get_events.
+            - Never conclude solely from metrics when Kubernetes evidence can confirm the cause.
+            - HPA showing ScalingActive=False with reason FailedGetResourceMetric is usually NOT a
+              metrics-server outage. Before concluding metrics-server is unavailable or misconfigured,
+              check get_resource on the HPA's scale target (Deployment) for a missing
+              resources.requests entry for that metric (e.g. no cpu request means CPU utilization
+              can never be computed) -- this is the far more common cause. Only blame metrics-server
+              itself if you have separate evidence it's actually broken (e.g. top_pods/top_nodes
+              also failing).
+
+            Cross-validation
+            - Correlate evidence before eliminating a hypothesis.
+            - Examples:
+            - A completed rollout does not prove the application is healthy.
+            - Ready Pods do not guarantee successful requests.
+            - Service endpoints do not guarantee network connectivity.
+            - Healthy metrics do not guarantee correct configuration.
+            - If two tools disagree, investigate the discrepancy before concluding.
+
+            Stopping criteria
+            -----------------
+            Stop as soon as one of the following is true:
+            - The user's question has been answered.
+            - A root cause is supported by direct evidence.
+            - Additional tool calls are unlikely to increase confidence.
+
+            Once a stopping criterion is met, answer immediately in that same turn. Do not spend
+            further tool calls re-confirming a conclusion you can already support, checking
+            adjacent-but-unrelated resources, or verifying that everything else looks fine -- that
+            is how a correct early finding turns into a needlessly long investigation.
+
+            If no conclusion can be reached, explain exactly what evidence is missing instead of guessing.
+
+            Response format
+            ---------------
+            For investigations, provide:
+            1. Evidence
+            2. Root cause (or most likely cause)
+            3. Reasoning
+
+            For simple factual questions, answer directly without unnecessary sections.
         """
-        self.classifier = Classifier(llm)
-        self.history_compactor = HistoryCompactor(llm)
+        self.classifier = Classifier(classifier_llm or llm)
+        self.history_compactor = HistoryCompactor(compactor_llm or llm)
         self.graph = self._build_graph()
 
     def _build_graph(self) -> CompiledStateGraph:
@@ -134,7 +200,35 @@ class DiagnosisAgent:
         }
     
     async def _tool_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        result = await self._tool_executor.ainvoke(state)
+        messages = state["messages"]
+        last_message = messages[-1]
+        all_calls = last_message.tool_calls
+        repeats = find_repeated_calls(messages)
+
+        fresh_messages: list[Any] = []
+        fresh_calls = [call for call in all_calls if call["id"] not in repeats]
+        if fresh_calls:
+            pruned_last = last_message.model_copy(update={"tool_calls": fresh_calls})
+            fresh_state = {**state, "messages": [*messages[:-1], pruned_last]}
+            fresh_result = await self._tool_executor.ainvoke(fresh_state)
+            fresh_messages = fresh_result["messages"]
+
+        repeat_messages = [
+            ToolMessage(
+                content=(
+                    "[duplicate call suppressed] This exact call was already made earlier in "
+                    f"this investigation and returned:\n{content}\n"
+                    "Calling it again will not produce a different result -- use the evidence "
+                    "you already have, or investigate something else."
+                ),
+                name=next(call["name"] for call in all_calls if call["id"] == call_id),
+                tool_call_id=call_id,
+            )
+            for call_id, content in repeats.items()
+        ]
+
+        order = {call["id"]: i for i, call in enumerate(all_calls)}
+        result = {"messages": sorted(fresh_messages + repeat_messages, key=lambda m: order[m.tool_call_id])}
         for msg in result["messages"]:
             self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result

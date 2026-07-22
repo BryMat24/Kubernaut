@@ -68,13 +68,6 @@ _NOISY_ANNOTATION_KEYS = {"kubectl.kubernetes.io/last-applied-configuration"}
 
 
 def _strip_manifest_noise(manifest: dict) -> dict:
-    """
-    Remove fields that inflate a manifest's size without adding diagnostic value --
-    per-request bookkeeping (resourceVersion, uid, generation, managedFields) and the
-    last-applied-configuration annotation (kubectl apply's full duplicate copy of the
-    object) -- while leaving spec/status/labels/other annotations completely intact.
-    Confirmed against a real captured manifest: these fields alone were 30% of its size.
-    """
     manifest = dict(manifest)
 
     metadata = manifest.get("metadata")
@@ -91,13 +84,6 @@ def _strip_manifest_noise(manifest: dict) -> dict:
 
 
 def _project_resource_summary(manifest: dict) -> dict:
-    """
-    Reduce a manifest to the minimal fields useful for identifying and orienting around a
-    resource: identity, labels, creation time, and its ownership chain (e.g. a Pod's
-    ownerReferences pointing at its ReplicaSet). Deep spec/status detail (image, replicas,
-    env vars, conditions) is intentionally not included here -- describe_resource is the
-    tool for that.
-    """
     metadata = manifest.get("metadata", {})
     return {
         "name": metadata.get("name"),
@@ -109,8 +95,6 @@ def _project_resource_summary(manifest: dict) -> dict:
 
 
 def _summarize_container_state(state: dict) -> dict:
-    """Reduce a container's status.state (exactly one of waiting/running/terminated) to
-    its phase name plus reason/exitCode, if present."""
     if "waiting" in state:
         return {"status": "waiting", "reason": state["waiting"].get("reason")}
     if "terminated" in state:
@@ -125,8 +109,6 @@ def _summarize_container_state(state: dict) -> dict:
 
 
 def _summarize_pod(manifest: dict) -> dict:
-    """Pod triage summary: phase plus per-container ready/restartCount/state -- the
-    crash-loop/OOM signal the generic identity-only projection drops entirely."""
     metadata = manifest.get("metadata", {})
     status = manifest.get("status", {})
     return {
@@ -148,8 +130,6 @@ def _summarize_pod(manifest: dict) -> dict:
 
 
 def _summarize_deployment(manifest: dict) -> dict:
-    """Deployment replica-health summary: desired vs. actual replica counts and the
-    Available/Progressing conditions that explain a mismatch (e.g. MinimumReplicasUnavailable)."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -172,7 +152,6 @@ def _summarize_deployment(manifest: dict) -> dict:
 
 
 def _summarize_replicaset(manifest: dict) -> dict:
-    """ReplicaSet replica-health summary -- same idea as Deployment, without conditions."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -189,8 +168,6 @@ def _summarize_replicaset(manifest: dict) -> dict:
 
 
 def _summarize_statefulset(manifest: dict) -> dict:
-    """StatefulSet replica-health summary, plus serviceName (the headless Service backing
-    stable network identity, a common StatefulSet-specific investigation target)."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -209,8 +186,6 @@ def _summarize_statefulset(manifest: dict) -> dict:
 
 
 def _summarize_daemonset(manifest: dict) -> dict:
-    """DaemonSet scheduling-health summary -- DaemonSet uses its own field-naming scheme
-    (desired/current/ready/available/unavailable *Number*Scheduled), not `replicas`."""
     metadata = manifest.get("metadata", {})
     status = manifest.get("status", {})
     return {
@@ -227,8 +202,6 @@ def _summarize_daemonset(manifest: dict) -> dict:
 
 
 def _summarize_service(manifest: dict) -> dict:
-    """Service summary: type, selector (the #1 source of "no backing pods" bugs), ports,
-    and whether a load balancer IP was actually provisioned."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -248,9 +221,6 @@ def _summarize_service(manifest: dict) -> dict:
 
 
 def _summarize_networkpolicy(manifest: dict) -> dict:
-    """NetworkPolicy summary: podSelector, policyTypes, and the actual ingress/egress
-    rules -- without these, an agent can't tell whether the policy blocks the traffic
-    it's investigating."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     return {
@@ -265,8 +235,6 @@ def _summarize_networkpolicy(manifest: dict) -> dict:
 
 
 def _summarize_pvc(manifest: dict) -> dict:
-    """PersistentVolumeClaim summary: binding phase and the storage actually requested --
-    the key signal for diagnosing a pod stuck Pending on an unbound claim."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -283,8 +251,6 @@ def _summarize_pvc(manifest: dict) -> dict:
 
 
 def _summarize_pv(manifest: dict) -> dict:
-    """PersistentVolume summary: binding phase, capacity, and which claim (if any) it's
-    bound to. Cluster-scoped -- no namespace on its own metadata."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -301,8 +267,6 @@ def _summarize_pv(manifest: dict) -> dict:
 
 
 def _summarize_configmap(manifest: dict) -> dict:
-    """ConfigMap summary: every key, with each value truncated defensively at 200
-    characters -- ConfigMap has no status subresource, so its content IS the summary."""
     metadata = manifest.get("metadata", {})
     data = manifest.get("data") or {}
     return {
@@ -318,9 +282,6 @@ def _summarize_configmap(manifest: dict) -> dict:
 
 
 def _summarize_secret(manifest: dict) -> dict:
-    """Secret summary: key names and type only -- values are deliberately never
-    included. They're base64-encoded but trivially decodable, and there's no
-    diagnostic need for an agent to have secret material pass through its context."""
     metadata = manifest.get("metadata", {})
     data = manifest.get("data") or {}
     return {
@@ -333,8 +294,6 @@ def _summarize_secret(manifest: dict) -> dict:
 
 
 def _summarize_resourcequota(manifest: dict) -> dict:
-    """ResourceQuota summary: used vs. hard limits -- the direct signal for diagnosing
-    "pod/object creation blocked by quota", not surfaced by any other tool."""
     metadata = manifest.get("metadata", {})
     status = manifest.get("status", {})
     return {
@@ -347,9 +306,6 @@ def _summarize_resourcequota(manifest: dict) -> dict:
 
 
 def _summarize_hpa(manifest: dict) -> dict:
-    """HorizontalPodAutoscaler summary: scale target, min/max bounds, current vs.
-    desired replicas, and conditions (AbleToScale/ScalingActive/ScalingLimited) --
-    exactly what DiagnosisAgent's own HPA-diagnosis guidance needs."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -370,8 +326,6 @@ def _summarize_hpa(manifest: dict) -> dict:
 
 
 def _summarize_job(manifest: dict) -> dict:
-    """Job summary: completion target, active/succeeded/failed counts, and
-    Complete/Failed conditions -- the pass/fail signal for a batch workload."""
     metadata = manifest.get("metadata", {})
     spec = manifest.get("spec", {})
     status = manifest.get("status", {})
@@ -393,9 +347,6 @@ def _summarize_job(manifest: dict) -> dict:
 
 
 def _summarize_node(manifest: dict) -> dict:
-    """Node summary: just the Ready condition and schedulability, so listing all nodes
-    quickly flags which ones are NotReady. get_node_conditions remains the tool for a
-    specific node's full conditions/taints/capacity."""
     metadata = manifest.get("metadata", {})
     status = manifest.get("status", {})
     conditions = status.get("conditions", [])
@@ -428,8 +379,6 @@ _KIND_SUMMARIZERS = {
 
 
 def _summarize_resource(kind: ResourceKind, manifest: dict) -> dict:
-    """Dispatch to the kind-specific summarizer if one exists, otherwise fall back to
-    the generic identity-only projection."""
     summarizer = _KIND_SUMMARIZERS.get(kind, _project_resource_summary)
     return summarizer(manifest)
 
@@ -559,7 +508,11 @@ def describe_resource(
     Use when: investigating why a resource is unhealthy — this surfaces runtime information
     Kubernetes generates (probe failures, scheduling decisions, recent events) that the plain
     manifest from get_resource does not include. Unlike the other tools here, this returns
-    formatted text, not JSON.
+    formatted text, not JSON. Once you've identified the specific resource, prefer this over
+    get_events — its own recent events are already included here.
+
+    Requires already knowing the resource's exact kind, name, and namespace — use
+    list_resources first if you don't.
 
     Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
     StorageClass, ClusterRole, ClusterRoleBinding).
@@ -594,8 +547,10 @@ def get_events(
     -n default --field-selector involvedObject.kind=Pod,involvedObject.name=my-pod
 
     Use when: you need to know why something happened (FailedScheduling, ImagePullBackOff,
-    FailedMount) rather than what the current state is — get_resource/describe_resource show
-    state, this shows the history of control-plane actions and failures.
+    FailedMount) rather than what the current state is.  If you already know
+    the specific resource, prefer describe_resource instead — its own recent events are
+    already included there. Use this tool when no resource is identified yet, or the
+    investigation spans a whole namespace/cluster.
     """
     cmd = ["kubectl", "get", "events", "--sort-by=.lastTimestamp", "-o", "json"]
 
