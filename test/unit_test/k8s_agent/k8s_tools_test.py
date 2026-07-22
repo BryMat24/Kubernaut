@@ -739,10 +739,37 @@ def test_get_resource_strips_last_applied_configuration_and_bookkeeping(mock_run
 
 
 # ------------------------------------------------------------------
+# _summarize_resource dispatch
+# ------------------------------------------------------------------
+
+def test_summarize_resource_dispatches_to_the_kind_specific_summarizer():
+    manifest = {
+        "metadata": {"name": "backend-deployment", "namespace": "dev", "labels": {}},
+        "spec": {"replicas": 3},
+        "status": {"replicas": 3, "readyReplicas": 1, "availableReplicas": 1, "unavailableReplicas": 2},
+    }
+    result = k8s_tools._summarize_resource(ResourceKind.DEPLOYMENT, manifest)
+    assert result["readyReplicas"] == 1
+    assert "spec" not in result
+
+
+def test_summarize_resource_falls_back_to_generic_projection_for_unmapped_kinds():
+    manifest = {
+        "metadata": {"name": "my-role", "labels": {}, "creationTimestamp": "2026-01-01T00:00:00Z"},
+        "rules": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}],
+    }
+    result = k8s_tools._summarize_resource(ResourceKind.CLUSTERROLE, manifest)
+    assert result == k8s_tools._project_resource_summary(manifest)
+    assert "rules" not in result
+
+
+# ------------------------------------------------------------------
 # list_resources
 # ------------------------------------------------------------------
 
 def test_list_resources_success(mock_run):
+    # Uses Ingress (no dedicated summarizer) so this exercises the generic
+    # _project_resource_summary fallback path, not kind-specific summarization.
     mock_run.return_value = make_completed_process(stdout=json.dumps({
         "kind": "List",
         "items": [
@@ -751,10 +778,10 @@ def test_list_resources_success(mock_run):
         ],
     }))
 
-    result = k8s_tools.list_resources(ResourceKind.DEPLOYMENT, "default")
+    result = k8s_tools.list_resources(ResourceKind.INGRESS, "default")
 
     mock_run.assert_called_once_with(
-        ["kubectl", "get", "deployment", "-n", "default", "-o", "json"],
+        ["kubectl", "get", "ingress", "-n", "default", "-o", "json"],
         capture_output=True,
         text=True,
         check=True,
@@ -809,14 +836,16 @@ def test_list_resources_cluster_scoped_kind_omits_namespace_flag(mock_run):
 
 
 def test_list_resources_with_label_selector(mock_run):
+    # Uses Ingress (no dedicated summarizer) so this exercises the generic
+    # _project_resource_summary fallback path, not kind-specific summarization.
     mock_run.return_value = make_completed_process(stdout=json.dumps({
         "items": [{"metadata": {"name": "api", "labels": {"app": "my-service"}}}],
     }))
 
-    result = k8s_tools.list_resources(ResourceKind.POD, "default", label_selector="app=my-service")
+    result = k8s_tools.list_resources(ResourceKind.INGRESS, "default", label_selector="app=my-service")
 
     mock_run.assert_called_once_with(
-        ["kubectl", "get", "pod", "-n", "default", "-l", "app=my-service", "-o", "json"],
+        ["kubectl", "get", "ingress", "-n", "default", "-l", "app=my-service", "-o", "json"],
         capture_output=True,
         text=True,
         check=True,
@@ -861,6 +890,37 @@ def test_list_resources_label_selector_with_cluster_scoped_kind(mock_run):
         text=True,
         check=True,
     )
+
+
+def test_list_resources_uses_pod_summarizer_for_pod_kind(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "items": [
+            {
+                "metadata": {"name": "backend-6qzrs", "namespace": "dev", "labels": {}},
+                "status": {
+                    "phase": "Running",
+                    "containerStatuses": [
+                        {"name": "backend", "ready": False, "restartCount": 269, "state": {"waiting": {"reason": "CrashLoopBackOff"}}}
+                    ],
+                },
+            }
+        ],
+    }))
+
+    result = k8s_tools.list_resources(ResourceKind.POD, "dev")
+
+    assert result[0]["phase"] == "Running"
+    assert result[0]["containerStatuses"][0]["state"] == {"status": "waiting", "reason": "CrashLoopBackOff"}
+
+
+def test_list_resources_falls_back_to_generic_projection_for_unmapped_kinds(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "items": [{"metadata": {"name": "my-role", "labels": {}}, "rules": []}],
+    }))
+
+    result = k8s_tools.list_resources(ResourceKind.CLUSTERROLE, "dev")
+
+    assert result == [{"name": "my-role", "namespace": None, "labels": {}, "creationTimestamp": None, "ownerReferences": []}]
 
 
 # ------------------------------------------------------------------

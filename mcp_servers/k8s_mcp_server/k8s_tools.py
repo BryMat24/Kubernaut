@@ -408,6 +408,32 @@ def _summarize_node(manifest: dict) -> dict:
     }
 
 
+_KIND_SUMMARIZERS = {
+    ResourceKind.POD: _summarize_pod,
+    ResourceKind.DEPLOYMENT: _summarize_deployment,
+    ResourceKind.REPLICASET: _summarize_replicaset,
+    ResourceKind.STATEFULSET: _summarize_statefulset,
+    ResourceKind.DAEMONSET: _summarize_daemonset,
+    ResourceKind.SERVICE: _summarize_service,
+    ResourceKind.NETWORKPOLICY: _summarize_networkpolicy,
+    ResourceKind.PERSISTENTVOLUMECLAIM: _summarize_pvc,
+    ResourceKind.PERSISTENTVOLUME: _summarize_pv,
+    ResourceKind.CONFIGMAP: _summarize_configmap,
+    ResourceKind.SECRET: _summarize_secret,
+    ResourceKind.RESOURCEQUOTA: _summarize_resourcequota,
+    ResourceKind.HORIZONTALPODAUTOSCALER: _summarize_hpa,
+    ResourceKind.JOB: _summarize_job,
+    ResourceKind.NODE: _summarize_node,
+}
+
+
+def _summarize_resource(kind: ResourceKind, manifest: dict) -> dict:
+    """Dispatch to the kind-specific summarizer if one exists, otherwise fall back to
+    the generic identity-only projection."""
+    summarizer = _KIND_SUMMARIZERS.get(kind, _project_resource_summary)
+    return summarizer(manifest)
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
@@ -481,10 +507,13 @@ def list_resources(
 ) -> list[dict]:
     """
     List Kubernetes resources of a given kind, for discovery before inspecting individual
-    resources. Returns a minimal identity projection per resource — name, namespace, labels,
-    creationTimestamp, ownerReferences — not the full manifest. For spec/status detail (image,
-    replicas, conditions) on a specific resource, use describe_resource once you've found it
-    here.
+    resources. Returns a per-kind summary tuned to that kind's health signal (e.g. replica
+    counts and conditions for Deployment/StatefulSet/DaemonSet, phase and container state
+    for Pod, binding phase for PersistentVolumeClaim/PersistentVolume) rather than the full
+    manifest -- for kinds without a dedicated summary, falls back to a minimal identity
+    projection (name, namespace, labels, creationTimestamp, ownerReferences). For full
+    spec/status detail on one specific resource, use get_resource or describe_resource once
+    you've found it here.
 
     Example: kubectl get pod -n default -o json
     Example (filtered by label): kubectl get pod -n default -l app=my-service -o json
@@ -512,7 +541,7 @@ def list_resources(
     )
 
     data = json.loads(result.stdout)
-    return [_project_resource_summary(item) for item in data.get("items", [])]
+    return [_summarize_resource(kind, item) for item in data.get("items", [])]
 
 
 @mcp.tool
