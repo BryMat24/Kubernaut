@@ -27,7 +27,7 @@ load_dotenv()
 pytestmark = pytest.mark.integration
 
 CASES_DIR = Path(__file__).parent / "cases" / "autoscaling"
-MCP_SERVER_DIR = Path(__file__).parents[3] / "mcp_servers" / "k8s_mcp_server"
+MCP_SERVER_DIR = Path(__file__).parents[2] / "mcp_servers" / "k8s_mcp_server"
 
 
 @pytest.fixture(scope="session")

@@ -66,6 +66,573 @@ def test_list_namespaces_kubectl_failure_propagates(mock_run):
 
 
 # ------------------------------------------------------------------
+# _project_resource_summary
+# ------------------------------------------------------------------
+
+def test_project_resource_summary_extracts_minimal_fields():
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "my-pod",
+            "namespace": "dev",
+            "labels": {"app": "backend"},
+            "creationTimestamp": "2026-01-01T00:00:00Z",
+            "ownerReferences": [{"kind": "ReplicaSet", "name": "backend-abc123"}],
+            "managedFields": [{"manager": "kubectl"}],
+            "annotations": {"kubectl.kubernetes.io/last-applied-configuration": "{...}"},
+        },
+        "spec": {"containers": [{"image": "backend:v2"}]},
+        "status": {"phase": "Running"},
+    }
+
+    result = k8s_tools._project_resource_summary(manifest)
+
+    assert result == {
+        "name": "my-pod",
+        "namespace": "dev",
+        "labels": {"app": "backend"},
+        "creationTimestamp": "2026-01-01T00:00:00Z",
+        "ownerReferences": [{"kind": "ReplicaSet", "name": "backend-abc123"}],
+    }
+
+
+def test_project_resource_summary_defaults_missing_fields():
+    manifest = {"metadata": {"name": "my-node"}}
+
+    result = k8s_tools._project_resource_summary(manifest)
+
+    assert result == {
+        "name": "my-node",
+        "namespace": None,
+        "labels": {},
+        "creationTimestamp": None,
+        "ownerReferences": [],
+    }
+
+
+def test_project_resource_summary_handles_missing_metadata():
+    result = k8s_tools._project_resource_summary({"kind": "Pod"})
+
+    assert result == {
+        "name": None,
+        "namespace": None,
+        "labels": {},
+        "creationTimestamp": None,
+        "ownerReferences": [],
+    }
+
+
+# ------------------------------------------------------------------
+# _strip_manifest_noise
+# ------------------------------------------------------------------
+
+def test_strip_manifest_noise_removes_last_applied_configuration_annotation():
+    manifest = {
+        "metadata": {
+            "name": "backend-deployment",
+            "annotations": {
+                "deployment.kubernetes.io/revision": "11",
+                "kubectl.kubernetes.io/last-applied-configuration": '{"apiVersion":"apps/v1"}',
+            },
+        },
+    }
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert "kubectl.kubernetes.io/last-applied-configuration" not in result["metadata"]["annotations"]
+    assert result["metadata"]["annotations"]["deployment.kubernetes.io/revision"] == "11"
+
+
+def test_strip_manifest_noise_removes_request_bookkeeping_fields():
+    manifest = {
+        "metadata": {
+            "name": "backend-deployment",
+            "resourceVersion": "133392",
+            "uid": "21dbb296-2146-415f-b21c-34e546c82e81",
+            "generation": 12,
+        },
+    }
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert "resourceVersion" not in result["metadata"]
+    assert "uid" not in result["metadata"]
+    assert "generation" not in result["metadata"]
+    assert result["metadata"]["name"] == "backend-deployment"
+
+
+def test_strip_manifest_noise_removes_managed_fields():
+    manifest = {"metadata": {"name": "my-pod", "managedFields": [{"manager": "kubectl"}]}}
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert "managedFields" not in result["metadata"]
+
+
+def test_strip_manifest_noise_keeps_spec_and_status_intact():
+    manifest = {
+        "metadata": {"name": "backend-deployment"},
+        "spec": {"replicas": 3, "template": {"spec": {"containers": [{"image": "backend:v2"}]}}},
+        "status": {"readyReplicas": 1, "conditions": [{"type": "Available", "status": "False"}]},
+    }
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert result["spec"] == manifest["spec"]
+    assert result["status"] == manifest["status"]
+
+
+def test_strip_manifest_noise_handles_missing_metadata():
+    assert k8s_tools._strip_manifest_noise({"kind": "Pod"}) == {"kind": "Pod"}
+
+
+def test_strip_manifest_noise_handles_missing_annotations():
+    manifest = {"metadata": {"name": "my-pod"}}
+    assert k8s_tools._strip_manifest_noise(manifest) == {"metadata": {"name": "my-pod"}}
+
+
+# ------------------------------------------------------------------
+# _summarize_pod
+# ------------------------------------------------------------------
+
+def test_summarize_container_state_waiting():
+    assert k8s_tools._summarize_container_state({"waiting": {"reason": "CrashLoopBackOff"}}) == {
+        "status": "waiting",
+        "reason": "CrashLoopBackOff",
+    }
+
+
+def test_summarize_container_state_terminated():
+    state = {"terminated": {"reason": "OOMKilled", "exitCode": 137}}
+    assert k8s_tools._summarize_container_state(state) == {
+        "status": "terminated",
+        "reason": "OOMKilled",
+        "exitCode": 137,
+    }
+
+
+def test_summarize_container_state_running():
+    assert k8s_tools._summarize_container_state({"running": {"startedAt": "2026-01-01T00:00:00Z"}}) == {
+        "status": "running",
+    }
+
+
+def test_summarize_container_state_unknown_when_empty():
+    assert k8s_tools._summarize_container_state({}) == {"status": "unknown"}
+
+
+def test_summarize_pod_extracts_phase_and_container_health():
+    manifest = {
+        "metadata": {"name": "backend-6qzrs", "namespace": "dev", "labels": {"app": "backend"}},
+        "spec": {"containers": [{"name": "backend", "image": "backend:v2"}]},
+        "status": {
+            "phase": "Running",
+            "containerStatuses": [
+                {
+                    "name": "backend",
+                    "ready": False,
+                    "restartCount": 269,
+                    "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                }
+            ],
+        },
+    }
+    result = k8s_tools._summarize_pod(manifest)
+    assert result == {
+        "name": "backend-6qzrs",
+        "namespace": "dev",
+        "labels": {"app": "backend"},
+        "ownerReferences": [],
+        "phase": "Running",
+        "containerStatuses": [
+            {"name": "backend", "ready": False, "restartCount": 269, "state": {"status": "waiting", "reason": "CrashLoopBackOff"}}
+        ],
+    }
+    # spec (image, env, resources) is intentionally not part of the pod summary
+    assert "spec" not in result
+
+
+def test_summarize_pod_defaults_missing_fields():
+    assert k8s_tools._summarize_pod({"metadata": {"name": "my-pod"}}) == {
+        "name": "my-pod",
+        "namespace": None,
+        "labels": {},
+        "ownerReferences": [],
+        "phase": None,
+        "containerStatuses": [],
+    }
+
+
+# ------------------------------------------------------------------
+# workload-controller summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_deployment_extracts_replica_health_and_conditions():
+    manifest = {
+        "metadata": {"name": "backend-deployment", "namespace": "dev", "labels": {"app": "backend"}},
+        "spec": {"replicas": 3},
+        "status": {
+            "replicas": 3,
+            "updatedReplicas": 3,
+            "readyReplicas": 1,
+            "availableReplicas": 1,
+            "unavailableReplicas": 2,
+            "conditions": [
+                {"type": "Available", "status": "False", "reason": "MinimumReplicasUnavailable"},
+            ],
+        },
+    }
+    result = k8s_tools._summarize_deployment(manifest)
+    assert result == {
+        "name": "backend-deployment",
+        "namespace": "dev",
+        "labels": {"app": "backend"},
+        "ownerReferences": [],
+        "desiredReplicas": 3,
+        "replicas": 3,
+        "updatedReplicas": 3,
+        "readyReplicas": 1,
+        "availableReplicas": 1,
+        "unavailableReplicas": 2,
+        "conditions": [{"type": "Available", "status": "False", "reason": "MinimumReplicasUnavailable"}],
+    }
+    assert "spec" not in result
+
+
+def test_summarize_deployment_defaults_missing_fields():
+    result = k8s_tools._summarize_deployment({"metadata": {"name": "d"}})
+    assert result["desiredReplicas"] is None
+    assert result["conditions"] == []
+
+
+def test_summarize_replicaset_extracts_replica_health():
+    manifest = {
+        "metadata": {"name": "backend-57b96fdb87", "namespace": "dev", "labels": {}},
+        "spec": {"replicas": 3},
+        "status": {"replicas": 3, "readyReplicas": 1, "availableReplicas": 1},
+    }
+    result = k8s_tools._summarize_replicaset(manifest)
+    assert result == {
+        "name": "backend-57b96fdb87",
+        "namespace": "dev",
+        "labels": {},
+        "ownerReferences": [],
+        "desiredReplicas": 3,
+        "replicas": 3,
+        "readyReplicas": 1,
+        "availableReplicas": 1,
+    }
+
+
+def test_summarize_statefulset_extracts_replica_health_and_service_name():
+    manifest = {
+        "metadata": {"name": "cache", "namespace": "dev", "labels": {}},
+        "spec": {"replicas": 3, "serviceName": "cache-headless"},
+        "status": {"replicas": 3, "readyReplicas": 3, "currentReplicas": 3, "updatedReplicas": 3},
+    }
+    result = k8s_tools._summarize_statefulset(manifest)
+    assert result == {
+        "name": "cache",
+        "namespace": "dev",
+        "labels": {},
+        "ownerReferences": [],
+        "serviceName": "cache-headless",
+        "desiredReplicas": 3,
+        "replicas": 3,
+        "readyReplicas": 3,
+        "currentReplicas": 3,
+        "updatedReplicas": 3,
+    }
+
+
+def test_summarize_daemonset_extracts_scheduling_health():
+    manifest = {
+        "metadata": {"name": "log-agent", "namespace": "kube-system", "labels": {}},
+        "status": {
+            "desiredNumberScheduled": 3,
+            "currentNumberScheduled": 3,
+            "numberReady": 2,
+            "numberAvailable": 2,
+            "numberUnavailable": 1,
+        },
+    }
+    result = k8s_tools._summarize_daemonset(manifest)
+    assert result == {
+        "name": "log-agent",
+        "namespace": "kube-system",
+        "labels": {},
+        "ownerReferences": [],
+        "desiredNumberScheduled": 3,
+        "currentNumberScheduled": 3,
+        "numberReady": 2,
+        "numberAvailable": 2,
+        "numberUnavailable": 1,
+    }
+
+
+# ------------------------------------------------------------------
+# networking summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_service_extracts_type_selector_ports_and_load_balancer():
+    manifest = {
+        "metadata": {"name": "backend-service", "namespace": "dev", "labels": {}},
+        "spec": {
+            "type": "ClusterIP",
+            "clusterIP": "10.96.0.5",
+            "selector": {"app": "backend"},
+            "ports": [{"port": 80, "targetPort": 8000, "protocol": "TCP"}],
+        },
+        "status": {"loadBalancer": {}},
+    }
+    result = k8s_tools._summarize_service(manifest)
+    assert result == {
+        "name": "backend-service",
+        "namespace": "dev",
+        "labels": {},
+        "type": "ClusterIP",
+        "clusterIP": "10.96.0.5",
+        "selector": {"app": "backend"},
+        "ports": [{"port": 80, "targetPort": 8000, "protocol": "TCP"}],
+        "loadBalancer": {},
+    }
+
+
+def test_summarize_service_defaults_missing_fields():
+    result = k8s_tools._summarize_service({"metadata": {"name": "s"}})
+    assert result["selector"] == {}
+    assert result["ports"] == []
+    assert result["loadBalancer"] == {}
+
+
+def test_summarize_networkpolicy_extracts_selector_types_and_rules():
+    manifest = {
+        "metadata": {"name": "deny-all-except-frontend", "namespace": "dev", "labels": {}},
+        "spec": {
+            "podSelector": {"matchLabels": {"app": "backend"}},
+            "policyTypes": ["Ingress"],
+            "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "frontend"}}}]}],
+        },
+    }
+    result = k8s_tools._summarize_networkpolicy(manifest)
+    assert result == {
+        "name": "deny-all-except-frontend",
+        "namespace": "dev",
+        "labels": {},
+        "podSelector": {"matchLabels": {"app": "backend"}},
+        "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "frontend"}}}]}],
+        "egress": [],
+    }
+
+
+# ------------------------------------------------------------------
+# storage summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_pvc_extracts_phase_and_storage_request():
+    manifest = {
+        "metadata": {"name": "backend-data", "namespace": "dev", "labels": {}},
+        "spec": {
+            "storageClassName": "standard",
+            "accessModes": ["ReadWriteOnce"],
+            "resources": {"requests": {"storage": "10Gi"}},
+        },
+        "status": {"phase": "Pending", "capacity": {}},
+    }
+    result = k8s_tools._summarize_pvc(manifest)
+    assert result == {
+        "name": "backend-data",
+        "namespace": "dev",
+        "labels": {},
+        "phase": "Pending",
+        "storageClassName": "standard",
+        "accessModes": ["ReadWriteOnce"],
+        "requestedStorage": "10Gi",
+        "capacity": {},
+    }
+
+
+def test_summarize_pvc_defaults_missing_fields():
+    result = k8s_tools._summarize_pvc({"metadata": {"name": "p"}})
+    assert result["phase"] is None
+    assert result["requestedStorage"] is None
+    assert result["accessModes"] == []
+
+
+def test_summarize_pv_extracts_phase_capacity_and_claim_ref():
+    manifest = {
+        "metadata": {"name": "pv-0001", "labels": {}},
+        "spec": {
+            "capacity": {"storage": "10Gi"},
+            "storageClassName": "standard",
+            "persistentVolumeReclaimPolicy": "Delete",
+            "claimRef": {"namespace": "dev", "name": "backend-data"},
+        },
+        "status": {"phase": "Bound"},
+    }
+    result = k8s_tools._summarize_pv(manifest)
+    assert result == {
+        "name": "pv-0001",
+        "labels": {},
+        "phase": "Bound",
+        "capacity": {"storage": "10Gi"},
+        "storageClassName": "standard",
+        "reclaimPolicy": "Delete",
+        "claimRef": {"namespace": "dev", "name": "backend-data"},
+    }
+
+
+def test_summarize_pv_defaults_missing_claim_ref():
+    result = k8s_tools._summarize_pv({"metadata": {"name": "pv-0002"}})
+    assert result["claimRef"] == {"namespace": None, "name": None}
+
+
+# ------------------------------------------------------------------
+# config/limits summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_configmap_extracts_data_with_value_truncation():
+    manifest = {
+        "metadata": {"name": "backend-config", "namespace": "dev", "labels": {}},
+        "data": {"DOWNSTREAM_URL": "http://cache-service:6379", "BIG": "x" * 300},
+    }
+    result = k8s_tools._summarize_configmap(manifest)
+    assert result["dataKeys"] == ["DOWNSTREAM_URL", "BIG"]
+    assert result["data"]["DOWNSTREAM_URL"] == "http://cache-service:6379"
+    assert result["data"]["BIG"] == "x" * 200 + "...[truncated]"
+
+
+def test_summarize_configmap_defaults_missing_data():
+    result = k8s_tools._summarize_configmap({"metadata": {"name": "c"}})
+    assert result["dataKeys"] == []
+    assert result["data"] == {}
+
+
+def test_summarize_secret_never_includes_values():
+    manifest = {
+        "metadata": {"name": "backend-tls", "namespace": "dev", "labels": {}},
+        "type": "kubernetes.io/tls",
+        "data": {"tls.crt": "base64stuff==", "tls.key": "base64secret=="},
+    }
+    result = k8s_tools._summarize_secret(manifest)
+    assert result == {
+        "name": "backend-tls",
+        "namespace": "dev",
+        "labels": {},
+        "type": "kubernetes.io/tls",
+        "dataKeys": ["tls.crt", "tls.key"],
+    }
+    assert "data" not in result
+    assert "base64secret==" not in str(result)
+
+
+def test_summarize_resourcequota_extracts_used_vs_hard():
+    manifest = {
+        "metadata": {"name": "dev-quota", "namespace": "dev", "labels": {}},
+        "status": {
+            "hard": {"pods": "10", "requests.cpu": "4"},
+            "used": {"pods": "10", "requests.cpu": "2"},
+        },
+    }
+    result = k8s_tools._summarize_resourcequota(manifest)
+    assert result == {
+        "name": "dev-quota",
+        "namespace": "dev",
+        "labels": {},
+        "hard": {"pods": "10", "requests.cpu": "4"},
+        "used": {"pods": "10", "requests.cpu": "2"},
+    }
+
+
+# ------------------------------------------------------------------
+# controller-status summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_hpa_extracts_replica_counts_and_conditions():
+    manifest = {
+        "metadata": {"name": "backend-hpa", "namespace": "dev", "labels": {}},
+        "spec": {
+            "scaleTargetRef": {"kind": "Deployment", "name": "backend-deployment"},
+            "minReplicas": 1,
+            "maxReplicas": 5,
+        },
+        "status": {
+            "currentReplicas": 3,
+            "desiredReplicas": 3,
+            "conditions": [{"type": "ScalingActive", "status": "False", "reason": "FailedGetResourceMetric"}],
+        },
+    }
+    result = k8s_tools._summarize_hpa(manifest)
+    assert result == {
+        "name": "backend-hpa",
+        "namespace": "dev",
+        "labels": {},
+        "scaleTargetRef": {"kind": "Deployment", "name": "backend-deployment"},
+        "minReplicas": 1,
+        "maxReplicas": 5,
+        "currentReplicas": 3,
+        "desiredReplicas": 3,
+        "conditions": [{"type": "ScalingActive", "status": "False", "reason": "FailedGetResourceMetric"}],
+    }
+
+
+def test_summarize_job_extracts_completion_counts_and_conditions():
+    manifest = {
+        "metadata": {"name": "backup-job", "namespace": "dev", "labels": {}},
+        "spec": {"completions": 1, "backoffLimit": 3},
+        "status": {
+            "active": 0,
+            "succeeded": 0,
+            "failed": 3,
+            "conditions": [{"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"}],
+        },
+    }
+    result = k8s_tools._summarize_job(manifest)
+    assert result == {
+        "name": "backup-job",
+        "namespace": "dev",
+        "labels": {},
+        "ownerReferences": [],
+        "completions": 1,
+        "backoffLimit": 3,
+        "active": 0,
+        "succeeded": 0,
+        "failed": 3,
+        "conditions": [{"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"}],
+    }
+
+
+def test_summarize_job_defaults_missing_fields():
+    result = k8s_tools._summarize_job({"metadata": {"name": "j"}})
+    assert result["active"] is None
+    assert result["conditions"] == []
+
+
+# ------------------------------------------------------------------
+# _summarize_node
+# ------------------------------------------------------------------
+
+def test_summarize_node_extracts_ready_condition_and_schedulability():
+    manifest = {
+        "metadata": {"name": "minikube", "labels": {"kubernetes.io/hostname": "minikube"}},
+        "spec": {"unschedulable": False},
+        "status": {
+            "conditions": [
+                {"type": "MemoryPressure", "status": "False"},
+                {"type": "Ready", "status": "True"},
+            ]
+        },
+    }
+    result = k8s_tools._summarize_node(manifest)
+    assert result == {
+        "name": "minikube",
+        "labels": {"kubernetes.io/hostname": "minikube"},
+        "ready": "True",
+        "unschedulable": False,
+    }
+
+
+def test_summarize_node_defaults_when_no_ready_condition_present():
+    result = k8s_tools._summarize_node({"metadata": {"name": "n"}})
+    assert result["ready"] is None
+    assert result["unschedulable"] is False
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 
@@ -140,11 +707,69 @@ def test_get_resource_clusterrolebinding_omits_namespace_flag(mock_run):
     )
 
 
+def test_get_resource_strips_last_applied_configuration_and_bookkeeping(mock_run):
+    manifest = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": "backend-deployment",
+            "namespace": "dev",
+            "resourceVersion": "133392",
+            "uid": "21dbb296-2146-415f-b21c-34e546c82e81",
+            "generation": 12,
+            "annotations": {
+                "deployment.kubernetes.io/revision": "11",
+                "kubectl.kubernetes.io/last-applied-configuration": '{"apiVersion":"apps/v1"}',
+            },
+        },
+        "spec": {"replicas": 3},
+        "status": {"readyReplicas": 1},
+    }
+    mock_run.return_value = make_completed_process(stdout=json.dumps(manifest))
+
+    result = k8s_tools.get_resource(ResourceKind.DEPLOYMENT, "backend-deployment", "dev")
+
+    assert "resourceVersion" not in result["metadata"]
+    assert "uid" not in result["metadata"]
+    assert "generation" not in result["metadata"]
+    assert "kubectl.kubernetes.io/last-applied-configuration" not in result["metadata"]["annotations"]
+    assert result["metadata"]["annotations"]["deployment.kubernetes.io/revision"] == "11"
+    assert result["spec"] == {"replicas": 3}
+    assert result["status"] == {"readyReplicas": 1}
+
+
+# ------------------------------------------------------------------
+# _summarize_resource dispatch
+# ------------------------------------------------------------------
+
+def test_summarize_resource_dispatches_to_the_kind_specific_summarizer():
+    manifest = {
+        "metadata": {"name": "backend-deployment", "namespace": "dev", "labels": {}},
+        "spec": {"replicas": 3},
+        "status": {"replicas": 3, "readyReplicas": 1, "availableReplicas": 1, "unavailableReplicas": 2},
+    }
+    result = k8s_tools._summarize_resource(ResourceKind.DEPLOYMENT, manifest)
+    assert result["readyReplicas"] == 1
+    assert "spec" not in result
+
+
+def test_summarize_resource_falls_back_to_generic_projection_for_unmapped_kinds():
+    manifest = {
+        "metadata": {"name": "my-role", "labels": {}, "creationTimestamp": "2026-01-01T00:00:00Z"},
+        "rules": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}],
+    }
+    result = k8s_tools._summarize_resource(ResourceKind.CLUSTERROLE, manifest)
+    assert result == k8s_tools._project_resource_summary(manifest)
+    assert "rules" not in result
+
+
 # ------------------------------------------------------------------
 # list_resources
 # ------------------------------------------------------------------
 
 def test_list_resources_success(mock_run):
+    # Uses Ingress (no dedicated summarizer) so this exercises the generic
+    # _project_resource_summary fallback path, not kind-specific summarization.
     mock_run.return_value = make_completed_process(stdout=json.dumps({
         "kind": "List",
         "items": [
@@ -153,15 +778,18 @@ def test_list_resources_success(mock_run):
         ],
     }))
 
-    result = k8s_tools.list_resources(ResourceKind.DEPLOYMENT, "default")
+    result = k8s_tools.list_resources(ResourceKind.INGRESS, "default")
 
     mock_run.assert_called_once_with(
-        ["kubectl", "get", "deployment", "-n", "default", "-o", "json"],
+        ["kubectl", "get", "ingress", "-n", "default", "-o", "json"],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result == [{"metadata": {"name": "api"}}, {"metadata": {"name": "worker"}}]
+    assert result == [
+        {"name": "api", "namespace": None, "labels": {}, "creationTimestamp": None, "ownerReferences": []},
+        {"name": "worker", "namespace": None, "labels": {}, "creationTimestamp": None, "ownerReferences": []},
+    ]
 
 
 def test_list_resources_returns_list_not_envelope(mock_run):
@@ -208,19 +836,29 @@ def test_list_resources_cluster_scoped_kind_omits_namespace_flag(mock_run):
 
 
 def test_list_resources_with_label_selector(mock_run):
+    # Uses Ingress (no dedicated summarizer) so this exercises the generic
+    # _project_resource_summary fallback path, not kind-specific summarization.
     mock_run.return_value = make_completed_process(stdout=json.dumps({
         "items": [{"metadata": {"name": "api", "labels": {"app": "my-service"}}}],
     }))
 
-    result = k8s_tools.list_resources(ResourceKind.POD, "default", label_selector="app=my-service")
+    result = k8s_tools.list_resources(ResourceKind.INGRESS, "default", label_selector="app=my-service")
 
     mock_run.assert_called_once_with(
-        ["kubectl", "get", "pod", "-n", "default", "-l", "app=my-service", "-o", "json"],
+        ["kubectl", "get", "ingress", "-n", "default", "-l", "app=my-service", "-o", "json"],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result == [{"metadata": {"name": "api", "labels": {"app": "my-service"}}}]
+    assert result == [
+        {
+            "name": "api",
+            "namespace": None,
+            "labels": {"app": "my-service"},
+            "creationTimestamp": None,
+            "ownerReferences": [],
+        },
+    ]
 
 
 def test_list_resources_without_label_selector_omits_l_flag(mock_run):
@@ -252,6 +890,37 @@ def test_list_resources_label_selector_with_cluster_scoped_kind(mock_run):
         text=True,
         check=True,
     )
+
+
+def test_list_resources_uses_pod_summarizer_for_pod_kind(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "items": [
+            {
+                "metadata": {"name": "backend-6qzrs", "namespace": "dev", "labels": {}},
+                "status": {
+                    "phase": "Running",
+                    "containerStatuses": [
+                        {"name": "backend", "ready": False, "restartCount": 269, "state": {"waiting": {"reason": "CrashLoopBackOff"}}}
+                    ],
+                },
+            }
+        ],
+    }))
+
+    result = k8s_tools.list_resources(ResourceKind.POD, "dev")
+
+    assert result[0]["phase"] == "Running"
+    assert result[0]["containerStatuses"][0]["state"] == {"status": "waiting", "reason": "CrashLoopBackOff"}
+
+
+def test_list_resources_falls_back_to_generic_projection_for_unmapped_kinds(mock_run):
+    mock_run.return_value = make_completed_process(stdout=json.dumps({
+        "items": [{"metadata": {"name": "my-role", "labels": {}}, "rules": []}],
+    }))
+
+    result = k8s_tools.list_resources(ResourceKind.CLUSTERROLE, "dev")
+
+    assert result == [{"name": "my-role", "namespace": None, "labels": {}, "creationTimestamp": None, "ownerReferences": []}]
 
 
 # ------------------------------------------------------------------

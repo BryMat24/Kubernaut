@@ -87,44 +87,6 @@ def latency_p95(
 
 # OOM indicator
 @mcp.tool
-def oom_indicator(
-    pod: Annotated[str, "Pod name prefix to match (e.g. the Deployment name)."],
-) -> list[dict]:
-    """
-    Retrieve each matching Pod's memory usage as a fraction of its configured memory limit.
-
-    PromQL: container_memory_working_set_bytes{pod=~"$pod.*"} / container_spec_memory_limit_bytes{pod=~"$pod.*"}
-
-    Use when: checking whether a Pod is approaching its memory limit and at risk of being
-    OOMKilled — a value approaching 1 means the Pod is close to its limit. Pairs with
-    oom_killed_pods to confirm whether an OOMKill has already happened.
-    """
-    promql = (
-        f'container_memory_working_set_bytes{{pod=~"{pod}.*"}} / '
-        f'container_spec_memory_limit_bytes{{pod=~"{pod}.*"}}'
-    )
-    return _instant_query(promql)
-
-
-# POD restart count
-@mcp.tool
-def pod_restart_count(
-    namespace: Annotated[str, "Namespace to inspect."],
-) -> list[dict]:
-    """
-    Retrieve the number of container restarts per Pod in a namespace over the last 15 minutes.
-
-    PromQL: increase(kube_pod_container_status_restarts_total{namespace="$ns"}[15m])
-
-    Use when: identifying which Pods are crash-looping — a non-zero, growing count points at
-    an unstable container. Use get_previous_logs (k8s tools) on the affected Pod to see why.
-    """
-    promql = f'increase(kube_pod_container_status_restarts_total{{namespace="{namespace}"}}[15m])'
-    return _instant_query(promql)
-
-
-# OOM
-@mcp.tool
 def oom_killed_pods(
     namespace: Annotated[str, "Namespace to inspect."],
 ) -> list[dict]:
@@ -137,4 +99,26 @@ def oom_killed_pods(
     kill, as opposed to a crash, liveness probe failure, or other termination reason.
     """
     promql = f'kube_pod_container_status_last_terminated_reason{{namespace="{namespace}", reason="OOMKilled"}}'
+    return _instant_query(promql)
+
+
+# CPU SATURATION
+@mcp.tool
+def cpu_saturation(
+    app: Annotated[str, "Value of the app label identifying the service."],
+) -> list[dict]:
+    """
+    Retrieve each matching container's CPU usage as a fraction of its configured CPU limit.
+
+    PromQL: sum(rate(container_cpu_usage_seconds_total{container="$app"}[5m])) /
+    sum(kube_pod_container_resource_limits{container="$app", resource="cpu"})
+
+    Use when: checking whether a container is CPU-throttled or close to its CPU limit — a value
+    approaching 1 means the container is close to saturating its limit, which can cause request
+    latency or timeouts even when the container isn't crashing.
+    """
+    promql = (
+        f'sum(rate(container_cpu_usage_seconds_total{{container="{app}"}}[5m])) / '
+        f'sum(kube_pod_container_resource_limits{{container="{app}", resource="cpu"}})'
+    )
     return _instant_query(promql)

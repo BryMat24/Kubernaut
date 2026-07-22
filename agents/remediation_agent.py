@@ -28,12 +28,18 @@ import os
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 class RemediationAgent:
-    def __init__(self, llm: BaseChatModel, tools: list[BaseTool], llm_judge: BaseChatModel) -> None:
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        tools: list[BaseTool],
+        llm_judge: BaseChatModel,
+        compactor_llm: BaseChatModel | None = None,
+    ) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
         self.graph = self._build_graph()
         self.llm_as_judge = DiffEvaluator(llm_judge)
-        self.history_compactor = HistoryCompactor(llm)
+        self.history_compactor = HistoryCompactor(compactor_llm or llm)
         self.logger = logging.getLogger("remediation_agent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = f"""

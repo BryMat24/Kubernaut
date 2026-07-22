@@ -63,6 +63,326 @@ _CLUSTER_SCOPED_KINDS = {
 }
 
 
+_NOISY_METADATA_KEYS = {"managedFields", "resourceVersion", "uid", "generation"}
+_NOISY_ANNOTATION_KEYS = {"kubectl.kubernetes.io/last-applied-configuration"}
+
+
+def _strip_manifest_noise(manifest: dict) -> dict:
+    manifest = dict(manifest)
+
+    metadata = manifest.get("metadata")
+    if isinstance(metadata, dict):
+        metadata = {k: v for k, v in metadata.items() if k not in _NOISY_METADATA_KEYS}
+        annotations = metadata.get("annotations")
+        if isinstance(annotations, dict):
+            metadata["annotations"] = {
+                k: v for k, v in annotations.items() if k not in _NOISY_ANNOTATION_KEYS
+            }
+        manifest["metadata"] = metadata
+
+    return manifest
+
+
+def _project_resource_summary(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "creationTimestamp": metadata.get("creationTimestamp"),
+        "ownerReferences": metadata.get("ownerReferences", []),
+    }
+
+
+def _summarize_container_state(state: dict) -> dict:
+    if "waiting" in state:
+        return {"status": "waiting", "reason": state["waiting"].get("reason")}
+    if "terminated" in state:
+        return {
+            "status": "terminated",
+            "reason": state["terminated"].get("reason"),
+            "exitCode": state["terminated"].get("exitCode"),
+        }
+    if "running" in state:
+        return {"status": "running"}
+    return {"status": "unknown"}
+
+
+def _summarize_pod(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "phase": status.get("phase"),
+        "containerStatuses": [
+            {
+                "name": c.get("name"),
+                "ready": c.get("ready"),
+                "restartCount": c.get("restartCount"),
+                "state": _summarize_container_state(c.get("state", {})),
+            }
+            for c in status.get("containerStatuses", [])
+        ],
+    }
+
+
+def _summarize_deployment(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "desiredReplicas": spec.get("replicas"),
+        "replicas": status.get("replicas"),
+        "updatedReplicas": status.get("updatedReplicas"),
+        "readyReplicas": status.get("readyReplicas"),
+        "availableReplicas": status.get("availableReplicas"),
+        "unavailableReplicas": status.get("unavailableReplicas"),
+        "conditions": [
+            {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+            for c in status.get("conditions", [])
+        ],
+    }
+
+
+def _summarize_replicaset(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "desiredReplicas": spec.get("replicas"),
+        "replicas": status.get("replicas"),
+        "readyReplicas": status.get("readyReplicas"),
+        "availableReplicas": status.get("availableReplicas"),
+    }
+
+
+def _summarize_statefulset(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "serviceName": spec.get("serviceName"),
+        "desiredReplicas": spec.get("replicas"),
+        "replicas": status.get("replicas"),
+        "readyReplicas": status.get("readyReplicas"),
+        "currentReplicas": status.get("currentReplicas"),
+        "updatedReplicas": status.get("updatedReplicas"),
+    }
+
+
+def _summarize_daemonset(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "desiredNumberScheduled": status.get("desiredNumberScheduled"),
+        "currentNumberScheduled": status.get("currentNumberScheduled"),
+        "numberReady": status.get("numberReady"),
+        "numberAvailable": status.get("numberAvailable"),
+        "numberUnavailable": status.get("numberUnavailable"),
+    }
+
+
+def _summarize_service(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "type": spec.get("type"),
+        "clusterIP": spec.get("clusterIP"),
+        "selector": spec.get("selector", {}),
+        "ports": [
+            {"port": p.get("port"), "targetPort": p.get("targetPort"), "protocol": p.get("protocol")}
+            for p in spec.get("ports", [])
+        ],
+        "loadBalancer": status.get("loadBalancer", {}),
+    }
+
+
+def _summarize_networkpolicy(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "podSelector": spec.get("podSelector", {}),
+        "policyTypes": spec.get("policyTypes", []),
+        "ingress": spec.get("ingress", []),
+        "egress": spec.get("egress", []),
+    }
+
+
+def _summarize_pvc(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "phase": status.get("phase"),
+        "storageClassName": spec.get("storageClassName"),
+        "accessModes": spec.get("accessModes", []),
+        "requestedStorage": spec.get("resources", {}).get("requests", {}).get("storage"),
+        "capacity": status.get("capacity", {}),
+    }
+
+
+def _summarize_pv(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    claim_ref = spec.get("claimRef") or {}
+    return {
+        "name": metadata.get("name"),
+        "labels": metadata.get("labels", {}),
+        "phase": status.get("phase"),
+        "capacity": spec.get("capacity", {}),
+        "storageClassName": spec.get("storageClassName"),
+        "reclaimPolicy": spec.get("persistentVolumeReclaimPolicy"),
+        "claimRef": {"namespace": claim_ref.get("namespace"), "name": claim_ref.get("name")},
+    }
+
+
+def _summarize_configmap(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    data = manifest.get("data") or {}
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "dataKeys": list(data.keys()),
+        "data": {
+            k: (v if len(v) <= 200 else v[:200] + "...[truncated]")
+            for k, v in data.items()
+        },
+    }
+
+
+def _summarize_secret(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    data = manifest.get("data") or {}
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "type": manifest.get("type"),
+        "dataKeys": list(data.keys()),
+    }
+
+
+def _summarize_resourcequota(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "hard": status.get("hard", {}),
+        "used": status.get("used", {}),
+    }
+
+
+def _summarize_hpa(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "scaleTargetRef": spec.get("scaleTargetRef", {}),
+        "minReplicas": spec.get("minReplicas"),
+        "maxReplicas": spec.get("maxReplicas"),
+        "currentReplicas": status.get("currentReplicas"),
+        "desiredReplicas": status.get("desiredReplicas"),
+        "conditions": [
+            {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+            for c in status.get("conditions", [])
+        ],
+    }
+
+
+def _summarize_job(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "completions": spec.get("completions"),
+        "backoffLimit": spec.get("backoffLimit"),
+        "active": status.get("active"),
+        "succeeded": status.get("succeeded"),
+        "failed": status.get("failed"),
+        "conditions": [
+            {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+            for c in status.get("conditions", [])
+        ],
+    }
+
+
+def _summarize_node(manifest: dict) -> dict:
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    conditions = status.get("conditions", [])
+    ready_condition = next((c for c in conditions if c.get("type") == "Ready"), {})
+    return {
+        "name": metadata.get("name"),
+        "labels": metadata.get("labels", {}),
+        "ready": ready_condition.get("status"),
+        "unschedulable": manifest.get("spec", {}).get("unschedulable", False),
+    }
+
+
+_KIND_SUMMARIZERS = {
+    ResourceKind.POD: _summarize_pod,
+    ResourceKind.DEPLOYMENT: _summarize_deployment,
+    ResourceKind.REPLICASET: _summarize_replicaset,
+    ResourceKind.STATEFULSET: _summarize_statefulset,
+    ResourceKind.DAEMONSET: _summarize_daemonset,
+    ResourceKind.SERVICE: _summarize_service,
+    ResourceKind.NETWORKPOLICY: _summarize_networkpolicy,
+    ResourceKind.PERSISTENTVOLUMECLAIM: _summarize_pvc,
+    ResourceKind.PERSISTENTVOLUME: _summarize_pv,
+    ResourceKind.CONFIGMAP: _summarize_configmap,
+    ResourceKind.SECRET: _summarize_secret,
+    ResourceKind.RESOURCEQUOTA: _summarize_resourcequota,
+    ResourceKind.HORIZONTALPODAUTOSCALER: _summarize_hpa,
+    ResourceKind.JOB: _summarize_job,
+    ResourceKind.NODE: _summarize_node,
+}
+
+
+def _summarize_resource(kind: ResourceKind, manifest: dict) -> dict:
+    summarizer = _KIND_SUMMARIZERS.get(kind, _project_resource_summary)
+    return summarizer(manifest)
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
@@ -106,7 +426,7 @@ def get_resource(
     Example: kubectl get deployment my-app -n default -o json
 
     Use when: you already know the resource's kind, name, and namespace and need its exact
-    current configuration (image, replicas, env vars, selectors, labels). For human-readable
+    current configuration (image, replicas, env vars, selectors, labels, detailed spec of the resource such as resource limits, volumes). For human-readable
     runtime diagnostics (conditions, restart counts, recent events) use describe_resource
     instead — this tool returns the structured manifest, not runtime state explanations.
 
@@ -125,7 +445,7 @@ def get_resource(
         check=True,
     )
 
-    return json.loads(result.stdout)
+    return _strip_manifest_noise(json.loads(result.stdout))
 
 
 @mcp.tool
@@ -135,13 +455,22 @@ def list_resources(
     label_selector: Annotated[str | None, "Label selector to filter results, e.g. app=my-service."] = None,
 ) -> list[dict]:
     """
-    List Kubernetes resources of a given kind, for discovery before inspecting individual resources.
+    List Kubernetes resources of a given kind, for discovery before inspecting individual
+    resources. Returns a per-kind summary tuned to that kind's health signal (e.g. replica
+    counts and conditions for Deployment/StatefulSet/DaemonSet, phase and container state
+    for Pod, binding phase for PersistentVolumeClaim/PersistentVolume) rather than the full
+    manifest -- for kinds without a dedicated summary, falls back to a minimal identity
+    projection (name, namespace, labels, creationTimestamp, ownerReferences). For full
+    spec/status detail on one specific resource, use get_resource or describe_resource once
+    you've found it here.
 
     Example: kubectl get pod -n default -o json
     Example (filtered by label): kubectl get pod -n default -l app=my-service -o json
 
     Use when: you know the kind but not the exact resource name yet — e.g. finding which pods
-    exist in a namespace before drilling into one with get_resource or describe_resource.
+    exist in a namespace, or tracing an ownership chain (ownerReferences) from a Pod to its
+    ReplicaSet/Deployment — before drilling into one with get_resource (full manifest) or
+    describe_resource (runtime detail).
 
     Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
     StorageClass, ClusterRole, ClusterRoleBinding).
@@ -161,7 +490,7 @@ def list_resources(
     )
 
     data = json.loads(result.stdout)
-    return data.get("items", [])
+    return [_summarize_resource(kind, item) for item in data.get("items", [])]
 
 
 @mcp.tool
@@ -179,7 +508,11 @@ def describe_resource(
     Use when: investigating why a resource is unhealthy — this surfaces runtime information
     Kubernetes generates (probe failures, scheduling decisions, recent events) that the plain
     manifest from get_resource does not include. Unlike the other tools here, this returns
-    formatted text, not JSON.
+    formatted text, not JSON. Once you've identified the specific resource, prefer this over
+    get_events — its own recent events are already included here.
+
+    Requires already knowing the resource's exact kind, name, and namespace — use
+    list_resources first if you don't.
 
     Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
     StorageClass, ClusterRole, ClusterRoleBinding).
@@ -214,8 +547,10 @@ def get_events(
     -n default --field-selector involvedObject.kind=Pod,involvedObject.name=my-pod
 
     Use when: you need to know why something happened (FailedScheduling, ImagePullBackOff,
-    FailedMount) rather than what the current state is — get_resource/describe_resource show
-    state, this shows the history of control-plane actions and failures.
+    FailedMount) rather than what the current state is.  If you already know
+    the specific resource, prefer describe_resource instead — its own recent events are
+    already included there. Use this tool when no resource is identified yet, or the
+    investigation spans a whole namespace/cluster.
     """
     cmd = ["kubectl", "get", "events", "--sort-by=.lastTimestamp", "-o", "json"]
 

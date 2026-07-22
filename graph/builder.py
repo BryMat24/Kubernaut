@@ -27,8 +27,19 @@ from graph.state import OrchestratorState
 from agents import DiagnosisAgent, PlannerAgent, RemediationAgent
 from utils import create_llm_model
 
-llm = create_llm_model("qwen/qwen3-coder-next")
-judge_llm = create_llm_model("qwen/qwen3-coder-next")
+# diangosis agent
+diagnosis_llm = create_llm_model("openai/gpt-5.4-mini")
+
+# planner agent
+planner_llm = create_llm_model("openai/gpt-5.4-mini")
+
+# remediation agent
+remediation_llm = create_llm_model("qwen/qwen3-coder-next")
+judge_llm = create_llm_model("openai/gpt-5.4-mini")
+
+# multi use across agents
+classifier_llm = create_llm_model("openai/gpt-4.1-nano")
+compactor_llm = create_llm_model("openai/gpt-4.1-nano")
 
 
 load_dotenv()
@@ -36,7 +47,12 @@ load_dotenv()
 async def init_diagnosis_agent() -> DiagnosisAgent:
     k8s_tools = await get_k8s_mcp_tools()
     promql_tools = await get_promql_mcp_tools()
-    return DiagnosisAgent(llm, k8s_tools + promql_tools)
+    return DiagnosisAgent(
+        diagnosis_llm,
+        k8s_tools + promql_tools,
+        classifier_llm=classifier_llm,
+        compactor_llm=compactor_llm,
+    )
 
 
 async def init_planner_agent() -> PlannerAgent:
@@ -46,7 +62,7 @@ async def init_planner_agent() -> PlannerAgent:
         list_files_in_directory,
         read_file_content,
     ]
-    return PlannerAgent(llm, file_tools)
+    return PlannerAgent(planner_llm, file_tools)
 
 
 async def init_remediation_agent() -> RemediationAgent:
@@ -58,7 +74,7 @@ async def init_remediation_agent() -> RemediationAgent:
         edit_file,
         write_file,
     ]
-    return RemediationAgent(llm, file_tools, judge_llm)
+    return RemediationAgent(remediation_llm, file_tools, judge_llm, compactor_llm=compactor_llm)
 
 
 async def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
