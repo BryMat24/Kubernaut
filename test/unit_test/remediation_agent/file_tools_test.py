@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from tools.file_tools import (
     MAX_CHARS,
+    MAX_FIND_RESULTS,
     edit_file,
     find,
     grep,
@@ -193,15 +194,16 @@ def test_find_success(tmp_path: Path):
 
 
 def test_find_truncates_large_result_sets(tmp_path: Path):
-    stdout = "\n".join(f"./apps/service-{i}/deployment.yaml" for i in range(75))
+    total = MAX_FIND_RESULTS + 45
+    stdout = "\n".join(f"./apps/service-{i}/deployment.yaml" for i in range(total))
     with patch("tools.file_tools.subprocess.run", return_value=make_completed_process(stdout=stdout, returncode=0)):
         result = find.func(str(tmp_path), "*.yaml")
 
-    assert len(result) == 51
-    assert "75 files matched" in result[0]
-    assert "showing first 50" in result[0]
+    assert len(result) == MAX_FIND_RESULTS + 1
+    assert f"{total} files matched" in result[0]
+    assert f"showing first {MAX_FIND_RESULTS}" in result[0]
     assert result[1] == "apps/service-0/deployment.yaml"
-    assert result[-1] == "apps/service-49/deployment.yaml"
+    assert result[-1] == f"apps/service-{MAX_FIND_RESULTS - 1}/deployment.yaml"
 
 
 def test_find_strips_leading_glob_prefix(tmp_path: Path):
