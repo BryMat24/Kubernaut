@@ -257,6 +257,113 @@ def test_summarize_pod_defaults_missing_fields():
 
 
 # ------------------------------------------------------------------
+# workload-controller summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_deployment_extracts_replica_health_and_conditions():
+    manifest = {
+        "metadata": {"name": "backend-deployment", "namespace": "dev", "labels": {"app": "backend"}},
+        "spec": {"replicas": 3},
+        "status": {
+            "replicas": 3,
+            "updatedReplicas": 3,
+            "readyReplicas": 1,
+            "availableReplicas": 1,
+            "unavailableReplicas": 2,
+            "conditions": [
+                {"type": "Available", "status": "False", "reason": "MinimumReplicasUnavailable"},
+            ],
+        },
+    }
+    result = k8s_tools._summarize_deployment(manifest)
+    assert result == {
+        "name": "backend-deployment",
+        "namespace": "dev",
+        "labels": {"app": "backend"},
+        "ownerReferences": [],
+        "desiredReplicas": 3,
+        "replicas": 3,
+        "updatedReplicas": 3,
+        "readyReplicas": 1,
+        "availableReplicas": 1,
+        "unavailableReplicas": 2,
+        "conditions": [{"type": "Available", "status": "False", "reason": "MinimumReplicasUnavailable"}],
+    }
+    assert "spec" not in result
+
+
+def test_summarize_deployment_defaults_missing_fields():
+    result = k8s_tools._summarize_deployment({"metadata": {"name": "d"}})
+    assert result["desiredReplicas"] is None
+    assert result["conditions"] == []
+
+
+def test_summarize_replicaset_extracts_replica_health():
+    manifest = {
+        "metadata": {"name": "backend-57b96fdb87", "namespace": "dev", "labels": {}},
+        "spec": {"replicas": 3},
+        "status": {"replicas": 3, "readyReplicas": 1, "availableReplicas": 1},
+    }
+    result = k8s_tools._summarize_replicaset(manifest)
+    assert result == {
+        "name": "backend-57b96fdb87",
+        "namespace": "dev",
+        "labels": {},
+        "ownerReferences": [],
+        "desiredReplicas": 3,
+        "replicas": 3,
+        "readyReplicas": 1,
+        "availableReplicas": 1,
+    }
+
+
+def test_summarize_statefulset_extracts_replica_health_and_service_name():
+    manifest = {
+        "metadata": {"name": "cache", "namespace": "dev", "labels": {}},
+        "spec": {"replicas": 3, "serviceName": "cache-headless"},
+        "status": {"replicas": 3, "readyReplicas": 3, "currentReplicas": 3, "updatedReplicas": 3},
+    }
+    result = k8s_tools._summarize_statefulset(manifest)
+    assert result == {
+        "name": "cache",
+        "namespace": "dev",
+        "labels": {},
+        "ownerReferences": [],
+        "serviceName": "cache-headless",
+        "desiredReplicas": 3,
+        "replicas": 3,
+        "readyReplicas": 3,
+        "currentReplicas": 3,
+        "updatedReplicas": 3,
+    }
+
+
+def test_summarize_daemonset_extracts_scheduling_health():
+    manifest = {
+        "metadata": {"name": "log-agent", "namespace": "kube-system", "labels": {}},
+        "status": {
+            "desiredNumberScheduled": 3,
+            "currentNumberScheduled": 3,
+            "numberReady": 2,
+            "numberAvailable": 2,
+            "numberUnavailable": 1,
+        },
+    }
+    result = k8s_tools._summarize_daemonset(manifest)
+    assert result == {
+        "name": "log-agent",
+        "namespace": "kube-system",
+        "labels": {},
+        "ownerReferences": [],
+        "desiredNumberScheduled": 3,
+        "currentNumberScheduled": 3,
+        "numberReady": 2,
+        "numberAvailable": 2,
+        "numberUnavailable": 1,
+    }
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 

@@ -147,6 +147,85 @@ def _summarize_pod(manifest: dict) -> dict:
     }
 
 
+def _summarize_deployment(manifest: dict) -> dict:
+    """Deployment replica-health summary: desired vs. actual replica counts and the
+    Available/Progressing conditions that explain a mismatch (e.g. MinimumReplicasUnavailable)."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "desiredReplicas": spec.get("replicas"),
+        "replicas": status.get("replicas"),
+        "updatedReplicas": status.get("updatedReplicas"),
+        "readyReplicas": status.get("readyReplicas"),
+        "availableReplicas": status.get("availableReplicas"),
+        "unavailableReplicas": status.get("unavailableReplicas"),
+        "conditions": [
+            {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+            for c in status.get("conditions", [])
+        ],
+    }
+
+
+def _summarize_replicaset(manifest: dict) -> dict:
+    """ReplicaSet replica-health summary -- same idea as Deployment, without conditions."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "desiredReplicas": spec.get("replicas"),
+        "replicas": status.get("replicas"),
+        "readyReplicas": status.get("readyReplicas"),
+        "availableReplicas": status.get("availableReplicas"),
+    }
+
+
+def _summarize_statefulset(manifest: dict) -> dict:
+    """StatefulSet replica-health summary, plus serviceName (the headless Service backing
+    stable network identity, a common StatefulSet-specific investigation target)."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "serviceName": spec.get("serviceName"),
+        "desiredReplicas": spec.get("replicas"),
+        "replicas": status.get("replicas"),
+        "readyReplicas": status.get("readyReplicas"),
+        "currentReplicas": status.get("currentReplicas"),
+        "updatedReplicas": status.get("updatedReplicas"),
+    }
+
+
+def _summarize_daemonset(manifest: dict) -> dict:
+    """DaemonSet scheduling-health summary -- DaemonSet uses its own field-naming scheme
+    (desired/current/ready/available/unavailable *Number*Scheduled), not `replicas`."""
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "desiredNumberScheduled": status.get("desiredNumberScheduled"),
+        "currentNumberScheduled": status.get("currentNumberScheduled"),
+        "numberReady": status.get("numberReady"),
+        "numberAvailable": status.get("numberAvailable"),
+        "numberUnavailable": status.get("numberUnavailable"),
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
