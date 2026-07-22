@@ -63,6 +63,24 @@ _CLUSTER_SCOPED_KINDS = {
 }
 
 
+def _project_resource_summary(manifest: dict) -> dict:
+    """
+    Reduce a manifest to the minimal fields useful for identifying and orienting around a
+    resource: identity, labels, creation time, and its ownership chain (e.g. a Pod's
+    ownerReferences pointing at its ReplicaSet). Deep spec/status detail (image, replicas,
+    env vars, conditions) is intentionally not included here -- describe_resource is the
+    tool for that.
+    """
+    metadata = manifest.get("metadata", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "creationTimestamp": metadata.get("creationTimestamp"),
+        "ownerReferences": metadata.get("ownerReferences", []),
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
@@ -125,7 +143,7 @@ def get_resource(
         check=True,
     )
 
-    return json.loads(result.stdout)
+    return _project_resource_summary(json.loads(result.stdout))
 
 
 @mcp.tool
@@ -161,7 +179,7 @@ def list_resources(
     )
 
     data = json.loads(result.stdout)
-    return data.get("items", [])
+    return [_project_resource_summary(item) for item in data.get("items", [])]
 
 
 @mcp.tool

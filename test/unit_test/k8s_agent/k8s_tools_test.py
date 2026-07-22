@@ -66,6 +66,64 @@ def test_list_namespaces_kubectl_failure_propagates(mock_run):
 
 
 # ------------------------------------------------------------------
+# _project_resource_summary
+# ------------------------------------------------------------------
+
+def test_project_resource_summary_extracts_minimal_fields():
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "my-pod",
+            "namespace": "dev",
+            "labels": {"app": "backend"},
+            "creationTimestamp": "2026-01-01T00:00:00Z",
+            "ownerReferences": [{"kind": "ReplicaSet", "name": "backend-abc123"}],
+            "managedFields": [{"manager": "kubectl"}],
+            "annotations": {"kubectl.kubernetes.io/last-applied-configuration": "{...}"},
+        },
+        "spec": {"containers": [{"image": "backend:v2"}]},
+        "status": {"phase": "Running"},
+    }
+
+    result = k8s_tools._project_resource_summary(manifest)
+
+    assert result == {
+        "name": "my-pod",
+        "namespace": "dev",
+        "labels": {"app": "backend"},
+        "creationTimestamp": "2026-01-01T00:00:00Z",
+        "ownerReferences": [{"kind": "ReplicaSet", "name": "backend-abc123"}],
+    }
+
+
+def test_project_resource_summary_defaults_missing_fields():
+    manifest = {"metadata": {"name": "my-node"}}
+
+    result = k8s_tools._project_resource_summary(manifest)
+
+    assert result == {
+        "name": "my-node",
+        "namespace": None,
+        "labels": {},
+        "creationTimestamp": None,
+        "ownerReferences": [],
+    }
+
+
+def test_project_resource_summary_handles_missing_metadata():
+    result = k8s_tools._project_resource_summary({"kind": "Pod"})
+
+    assert result == {
+        "name": None,
+        "namespace": None,
+        "labels": {},
+        "creationTimestamp": None,
+        "ownerReferences": [],
+    }
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 
@@ -81,7 +139,13 @@ def test_get_resource_success(mock_run):
         text=True,
         check=True,
     )
-    assert result == manifest
+    assert result == {
+        "name": "my-pod",
+        "namespace": None,
+        "labels": {},
+        "creationTimestamp": None,
+        "ownerReferences": [],
+    }
 
 
 def test_get_resource_uses_default_namespace(mock_run):
@@ -161,7 +225,10 @@ def test_list_resources_success(mock_run):
         text=True,
         check=True,
     )
-    assert result == [{"metadata": {"name": "api"}}, {"metadata": {"name": "worker"}}]
+    assert result == [
+        {"name": "api", "namespace": None, "labels": {}, "creationTimestamp": None, "ownerReferences": []},
+        {"name": "worker", "namespace": None, "labels": {}, "creationTimestamp": None, "ownerReferences": []},
+    ]
 
 
 def test_list_resources_returns_list_not_envelope(mock_run):
@@ -220,7 +287,15 @@ def test_list_resources_with_label_selector(mock_run):
         text=True,
         check=True,
     )
-    assert result == [{"metadata": {"name": "api", "labels": {"app": "my-service"}}}]
+    assert result == [
+        {
+            "name": "api",
+            "namespace": None,
+            "labels": {"app": "my-service"},
+            "creationTimestamp": None,
+            "ownerReferences": [],
+        },
+    ]
 
 
 def test_list_resources_without_label_selector_omits_l_flag(mock_run):
