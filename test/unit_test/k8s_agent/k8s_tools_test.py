@@ -539,6 +539,70 @@ def test_summarize_resourcequota_extracts_used_vs_hard():
 
 
 # ------------------------------------------------------------------
+# controller-status summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_hpa_extracts_replica_counts_and_conditions():
+    manifest = {
+        "metadata": {"name": "backend-hpa", "namespace": "dev", "labels": {}},
+        "spec": {
+            "scaleTargetRef": {"kind": "Deployment", "name": "backend-deployment"},
+            "minReplicas": 1,
+            "maxReplicas": 5,
+        },
+        "status": {
+            "currentReplicas": 3,
+            "desiredReplicas": 3,
+            "conditions": [{"type": "ScalingActive", "status": "False", "reason": "FailedGetResourceMetric"}],
+        },
+    }
+    result = k8s_tools._summarize_hpa(manifest)
+    assert result == {
+        "name": "backend-hpa",
+        "namespace": "dev",
+        "labels": {},
+        "scaleTargetRef": {"kind": "Deployment", "name": "backend-deployment"},
+        "minReplicas": 1,
+        "maxReplicas": 5,
+        "currentReplicas": 3,
+        "desiredReplicas": 3,
+        "conditions": [{"type": "ScalingActive", "status": "False", "reason": "FailedGetResourceMetric"}],
+    }
+
+
+def test_summarize_job_extracts_completion_counts_and_conditions():
+    manifest = {
+        "metadata": {"name": "backup-job", "namespace": "dev", "labels": {}},
+        "spec": {"completions": 1, "backoffLimit": 3},
+        "status": {
+            "active": 0,
+            "succeeded": 0,
+            "failed": 3,
+            "conditions": [{"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"}],
+        },
+    }
+    result = k8s_tools._summarize_job(manifest)
+    assert result == {
+        "name": "backup-job",
+        "namespace": "dev",
+        "labels": {},
+        "ownerReferences": [],
+        "completions": 1,
+        "backoffLimit": 3,
+        "active": 0,
+        "succeeded": 0,
+        "failed": 3,
+        "conditions": [{"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"}],
+    }
+
+
+def test_summarize_job_defaults_missing_fields():
+    result = k8s_tools._summarize_job({"metadata": {"name": "j"}})
+    assert result["active"] is None
+    assert result["conditions"] == []
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 

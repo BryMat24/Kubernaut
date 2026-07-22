@@ -346,6 +346,52 @@ def _summarize_resourcequota(manifest: dict) -> dict:
     }
 
 
+def _summarize_hpa(manifest: dict) -> dict:
+    """HorizontalPodAutoscaler summary: scale target, min/max bounds, current vs.
+    desired replicas, and conditions (AbleToScale/ScalingActive/ScalingLimited) --
+    exactly what DiagnosisAgent's own HPA-diagnosis guidance needs."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "scaleTargetRef": spec.get("scaleTargetRef", {}),
+        "minReplicas": spec.get("minReplicas"),
+        "maxReplicas": spec.get("maxReplicas"),
+        "currentReplicas": status.get("currentReplicas"),
+        "desiredReplicas": status.get("desiredReplicas"),
+        "conditions": [
+            {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+            for c in status.get("conditions", [])
+        ],
+    }
+
+
+def _summarize_job(manifest: dict) -> dict:
+    """Job summary: completion target, active/succeeded/failed counts, and
+    Complete/Failed conditions -- the pass/fail signal for a batch workload."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "completions": spec.get("completions"),
+        "backoffLimit": spec.get("backoffLimit"),
+        "active": status.get("active"),
+        "succeeded": status.get("succeeded"),
+        "failed": status.get("failed"),
+        "conditions": [
+            {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason")}
+            for c in status.get("conditions", [])
+        ],
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
