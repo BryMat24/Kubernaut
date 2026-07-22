@@ -364,6 +364,62 @@ def test_summarize_daemonset_extracts_scheduling_health():
 
 
 # ------------------------------------------------------------------
+# networking summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_service_extracts_type_selector_ports_and_load_balancer():
+    manifest = {
+        "metadata": {"name": "backend-service", "namespace": "dev", "labels": {}},
+        "spec": {
+            "type": "ClusterIP",
+            "clusterIP": "10.96.0.5",
+            "selector": {"app": "backend"},
+            "ports": [{"port": 80, "targetPort": 8000, "protocol": "TCP"}],
+        },
+        "status": {"loadBalancer": {}},
+    }
+    result = k8s_tools._summarize_service(manifest)
+    assert result == {
+        "name": "backend-service",
+        "namespace": "dev",
+        "labels": {},
+        "type": "ClusterIP",
+        "clusterIP": "10.96.0.5",
+        "selector": {"app": "backend"},
+        "ports": [{"port": 80, "targetPort": 8000, "protocol": "TCP"}],
+        "loadBalancer": {},
+    }
+
+
+def test_summarize_service_defaults_missing_fields():
+    result = k8s_tools._summarize_service({"metadata": {"name": "s"}})
+    assert result["selector"] == {}
+    assert result["ports"] == []
+    assert result["loadBalancer"] == {}
+
+
+def test_summarize_networkpolicy_extracts_selector_types_and_rules():
+    manifest = {
+        "metadata": {"name": "deny-all-except-frontend", "namespace": "dev", "labels": {}},
+        "spec": {
+            "podSelector": {"matchLabels": {"app": "backend"}},
+            "policyTypes": ["Ingress"],
+            "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "frontend"}}}]}],
+        },
+    }
+    result = k8s_tools._summarize_networkpolicy(manifest)
+    assert result == {
+        "name": "deny-all-except-frontend",
+        "namespace": "dev",
+        "labels": {},
+        "podSelector": {"matchLabels": {"app": "backend"}},
+        "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "frontend"}}}]}],
+        "egress": [],
+    }
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 

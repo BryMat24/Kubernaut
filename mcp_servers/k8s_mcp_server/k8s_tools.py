@@ -226,6 +226,44 @@ def _summarize_daemonset(manifest: dict) -> dict:
     }
 
 
+def _summarize_service(manifest: dict) -> dict:
+    """Service summary: type, selector (the #1 source of "no backing pods" bugs), ports,
+    and whether a load balancer IP was actually provisioned."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "type": spec.get("type"),
+        "clusterIP": spec.get("clusterIP"),
+        "selector": spec.get("selector", {}),
+        "ports": [
+            {"port": p.get("port"), "targetPort": p.get("targetPort"), "protocol": p.get("protocol")}
+            for p in spec.get("ports", [])
+        ],
+        "loadBalancer": status.get("loadBalancer", {}),
+    }
+
+
+def _summarize_networkpolicy(manifest: dict) -> dict:
+    """NetworkPolicy summary: podSelector, policyTypes, and the actual ingress/egress
+    rules -- without these, an agent can't tell whether the policy blocks the traffic
+    it's investigating."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "podSelector": spec.get("podSelector", {}),
+        "policyTypes": spec.get("policyTypes", []),
+        "ingress": spec.get("ingress", []),
+        "egress": spec.get("egress", []),
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
