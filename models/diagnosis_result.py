@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+
 class DiagnosisResult(BaseModel):
     summary: str = Field(description="Plain-language explanation of findings")
     root_cause: str | None = Field(default=None, description="Root cause if one was found")

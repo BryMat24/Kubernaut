@@ -17,6 +17,7 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+
 class DiagnosisAgent:
     def __init__(
         self,

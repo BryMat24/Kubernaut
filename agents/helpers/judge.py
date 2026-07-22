@@ -1,5 +1,6 @@
 from models import EvalResult
 
+
 class DiffEvaluator:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(EvalResult, include_raw=True)

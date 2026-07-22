@@ -647,6 +647,7 @@ def get_previous_logs(
 
     return result.stdout
 
+
 # METRICS
 @mcp.tool
 def top_pods(

@@ -27,6 +27,7 @@ import os
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+
 class RemediationAgent:
     def __init__(
         self,

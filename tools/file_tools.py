@@ -6,6 +6,7 @@ import subprocess
 
 MAX_CHARS = 10_000
 
+
 @tool
 def list_files_in_directory(
     working_directory: Annotated[str, "The absolute path to the base directory."],
@@ -32,6 +33,7 @@ def list_files_in_directory(
     except Exception as e:
         return f"Error listing files: {e}"
 
+
 @tool
 def read_file_content(
     working_directory: Annotated[str, "The absolute path to the base directory."],
@@ -54,6 +56,7 @@ def read_file_content(
         return content
     except Exception as e:
         return f"Error reading file: {e}"
+
 
 @tool
 def grep(
@@ -104,6 +107,7 @@ def grep(
         )
     return matches
 
+
 @tool
 def find(
     working_directory: Annotated[str, "The absolute path to the base directory."],
@@ -133,6 +137,7 @@ def find(
             continue
         files.append(os.path.abspath(os.path.join(working_directory, line)))
     return files
+
 
 @tool
 def edit_file(
@@ -165,6 +170,7 @@ def edit_file(
         return f'Successfully edited "{file_path}"'
     except Exception as e:
         return f"Error editing file: {e}"
+
 
 @tool
 def write_file(

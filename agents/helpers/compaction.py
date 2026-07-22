@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage
 from langsmith import traceable
 
+
 class HistoryCompactor:
     """Summarizes old tool-call history once it grows past a size threshold, instead of
     dropping it outright -- keeps what's sent to the LLM bounded without losing the
