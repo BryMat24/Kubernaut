@@ -14,6 +14,8 @@ api:
       memory: 512Mi
 
 ui:
+  # NOTE: NEXT_PUBLIC_API_URL is baked into the ui image at `docker build` time
+  # (a Next.js build-time constant) -- it is not settable via this values file.
   image:
     repository: kubernaut-ui
     tag: latest

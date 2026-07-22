@@ -6,6 +6,12 @@ Workloads:
   - {{ .Release.Name }}-k8s-mcp-server         (ClusterIP :8000, read-only cluster RBAC)
   - {{ .Release.Name }}-prometheus-mcp-server  (ClusterIP :8000)
 
+NOTE: the k8s-mcp-server's ClusterRole/ClusterRoleBinding are named
+"{{ .Release.Name }}-k8s-mcp-server" and are cluster-scoped, not namespace-scoped.
+Installing two releases with the SAME release name into DIFFERENT namespaces will
+collide on those two cluster-scoped resources -- use a distinct release name per
+installation if you need more than one Kubernaut deployment on the same cluster.
+
 Before this release is usable, create the Secret it expects (this chart does not create it):
 
   kubectl create secret generic {{ .Values.api.existingSecret }} \

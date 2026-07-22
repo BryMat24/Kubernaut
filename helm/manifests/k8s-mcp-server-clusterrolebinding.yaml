@@ -12,4 +12,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: kubernaut-k8s-mcp-server
+    # Hardcoded: raw manifests aren't templated. If applying into a namespace
+    # other than "default", update this to match or the k8s-mcp-server pod
+    # will silently run without its ClusterRole permissions.
     namespace: default

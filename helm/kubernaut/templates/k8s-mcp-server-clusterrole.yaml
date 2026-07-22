@@ -36,7 +36,6 @@ rules:
   - apiGroups: ["batch"]
     resources:
       - jobs
-      - cronjobs
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources:
@@ -47,8 +46,6 @@ rules:
     resources:
       - clusterroles
       - clusterrolebindings
-      - roles
-      - rolebindings
     verbs: ["get", "list", "watch"]
   - apiGroups: ["storage.k8s.io"]
     resources:
