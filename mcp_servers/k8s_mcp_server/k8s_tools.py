@@ -300,6 +300,52 @@ def _summarize_pv(manifest: dict) -> dict:
     }
 
 
+def _summarize_configmap(manifest: dict) -> dict:
+    """ConfigMap summary: every key, with each value truncated defensively at 200
+    characters -- ConfigMap has no status subresource, so its content IS the summary."""
+    metadata = manifest.get("metadata", {})
+    data = manifest.get("data") or {}
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "dataKeys": list(data.keys()),
+        "data": {
+            k: (v if len(v) <= 200 else v[:200] + "...[truncated]")
+            for k, v in data.items()
+        },
+    }
+
+
+def _summarize_secret(manifest: dict) -> dict:
+    """Secret summary: key names and type only -- values are deliberately never
+    included. They're base64-encoded but trivially decodable, and there's no
+    diagnostic need for an agent to have secret material pass through its context."""
+    metadata = manifest.get("metadata", {})
+    data = manifest.get("data") or {}
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "type": manifest.get("type"),
+        "dataKeys": list(data.keys()),
+    }
+
+
+def _summarize_resourcequota(manifest: dict) -> dict:
+    """ResourceQuota summary: used vs. hard limits -- the direct signal for diagnosing
+    "pod/object creation blocked by quota", not surfaced by any other tool."""
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "hard": status.get("hard", {}),
+        "used": status.get("used", {}),
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:

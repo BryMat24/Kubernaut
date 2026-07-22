@@ -482,6 +482,63 @@ def test_summarize_pv_defaults_missing_claim_ref():
 
 
 # ------------------------------------------------------------------
+# config/limits summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_configmap_extracts_data_with_value_truncation():
+    manifest = {
+        "metadata": {"name": "backend-config", "namespace": "dev", "labels": {}},
+        "data": {"DOWNSTREAM_URL": "http://cache-service:6379", "BIG": "x" * 300},
+    }
+    result = k8s_tools._summarize_configmap(manifest)
+    assert result["dataKeys"] == ["DOWNSTREAM_URL", "BIG"]
+    assert result["data"]["DOWNSTREAM_URL"] == "http://cache-service:6379"
+    assert result["data"]["BIG"] == "x" * 200 + "...[truncated]"
+
+
+def test_summarize_configmap_defaults_missing_data():
+    result = k8s_tools._summarize_configmap({"metadata": {"name": "c"}})
+    assert result["dataKeys"] == []
+    assert result["data"] == {}
+
+
+def test_summarize_secret_never_includes_values():
+    manifest = {
+        "metadata": {"name": "backend-tls", "namespace": "dev", "labels": {}},
+        "type": "kubernetes.io/tls",
+        "data": {"tls.crt": "base64stuff==", "tls.key": "base64secret=="},
+    }
+    result = k8s_tools._summarize_secret(manifest)
+    assert result == {
+        "name": "backend-tls",
+        "namespace": "dev",
+        "labels": {},
+        "type": "kubernetes.io/tls",
+        "dataKeys": ["tls.crt", "tls.key"],
+    }
+    assert "data" not in result
+    assert "base64secret==" not in str(result)
+
+
+def test_summarize_resourcequota_extracts_used_vs_hard():
+    manifest = {
+        "metadata": {"name": "dev-quota", "namespace": "dev", "labels": {}},
+        "status": {
+            "hard": {"pods": "10", "requests.cpu": "4"},
+            "used": {"pods": "10", "requests.cpu": "2"},
+        },
+    }
+    result = k8s_tools._summarize_resourcequota(manifest)
+    assert result == {
+        "name": "dev-quota",
+        "namespace": "dev",
+        "labels": {},
+        "hard": {"pods": "10", "requests.cpu": "4"},
+        "used": {"pods": "10", "requests.cpu": "2"},
+    }
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 
