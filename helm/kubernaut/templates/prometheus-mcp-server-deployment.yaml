@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-prometheus-mcp-server
+  labels:
+    {{- include "kubernaut.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-mcp-server
+spec:
+  replicas: {{ .Values.prometheusMcpServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kubernaut.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus-mcp-server
+  template:
+    metadata:
+      labels:
+        {{- include "kubernaut.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus-mcp-server
+    spec:
+      containers:
+        - name: prometheus-mcp-server
+          image: "{{ .Values.prometheusMcpServer.image.repository }}:{{ .Values.prometheusMcpServer.image.tag }}"
+          imagePullPolicy: {{ .Values.prometheusMcpServer.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheusMcpServer.prometheusUrl | quote }}
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.prometheusMcpServer.resources | nindent 12 }}

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-prometheus-mcp-server
+  labels:
+    {{- include "kubernaut.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-mcp-server
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kubernaut.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-mcp-server
+  ports:
+    - port: 8000
+      targetPort: 8000
