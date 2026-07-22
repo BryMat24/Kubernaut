@@ -139,13 +139,7 @@ def test_get_resource_success(mock_run):
         text=True,
         check=True,
     )
-    assert result == {
-        "name": "my-pod",
-        "namespace": None,
-        "labels": {},
-        "creationTimestamp": None,
-        "ownerReferences": [],
-    }
+    assert result == manifest
 
 
 def test_get_resource_uses_default_namespace(mock_run):

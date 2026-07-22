@@ -143,7 +143,7 @@ def get_resource(
         check=True,
     )
 
-    return result.stdout
+    return json.loads(result.stdout)
 
 
 @mcp.tool
@@ -164,7 +164,7 @@ def list_resources(
 
     Use when: you know the kind but not the exact resource name yet — e.g. finding which pods
     exist in a namespace, or tracing an ownership chain (ownerReferences) from a Pod to its
-    ReplicaSet/Deployment — before drilling into one with get_resource (exact identity) or
+    ReplicaSet/Deployment — before drilling into one with get_resource (full manifest) or
     describe_resource (runtime detail).
 
     Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
