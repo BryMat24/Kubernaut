@@ -420,6 +420,68 @@ def test_summarize_networkpolicy_extracts_selector_types_and_rules():
 
 
 # ------------------------------------------------------------------
+# storage summarizers
+# ------------------------------------------------------------------
+
+def test_summarize_pvc_extracts_phase_and_storage_request():
+    manifest = {
+        "metadata": {"name": "backend-data", "namespace": "dev", "labels": {}},
+        "spec": {
+            "storageClassName": "standard",
+            "accessModes": ["ReadWriteOnce"],
+            "resources": {"requests": {"storage": "10Gi"}},
+        },
+        "status": {"phase": "Pending", "capacity": {}},
+    }
+    result = k8s_tools._summarize_pvc(manifest)
+    assert result == {
+        "name": "backend-data",
+        "namespace": "dev",
+        "labels": {},
+        "phase": "Pending",
+        "storageClassName": "standard",
+        "accessModes": ["ReadWriteOnce"],
+        "requestedStorage": "10Gi",
+        "capacity": {},
+    }
+
+
+def test_summarize_pvc_defaults_missing_fields():
+    result = k8s_tools._summarize_pvc({"metadata": {"name": "p"}})
+    assert result["phase"] is None
+    assert result["requestedStorage"] is None
+    assert result["accessModes"] == []
+
+
+def test_summarize_pv_extracts_phase_capacity_and_claim_ref():
+    manifest = {
+        "metadata": {"name": "pv-0001", "labels": {}},
+        "spec": {
+            "capacity": {"storage": "10Gi"},
+            "storageClassName": "standard",
+            "persistentVolumeReclaimPolicy": "Delete",
+            "claimRef": {"namespace": "dev", "name": "backend-data"},
+        },
+        "status": {"phase": "Bound"},
+    }
+    result = k8s_tools._summarize_pv(manifest)
+    assert result == {
+        "name": "pv-0001",
+        "labels": {},
+        "phase": "Bound",
+        "capacity": {"storage": "10Gi"},
+        "storageClassName": "standard",
+        "reclaimPolicy": "Delete",
+        "claimRef": {"namespace": "dev", "name": "backend-data"},
+    }
+
+
+def test_summarize_pv_defaults_missing_claim_ref():
+    result = k8s_tools._summarize_pv({"metadata": {"name": "pv-0002"}})
+    assert result["claimRef"] == {"namespace": None, "name": None}
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 

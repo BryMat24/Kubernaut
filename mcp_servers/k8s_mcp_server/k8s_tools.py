@@ -264,6 +264,42 @@ def _summarize_networkpolicy(manifest: dict) -> dict:
     }
 
 
+def _summarize_pvc(manifest: dict) -> dict:
+    """PersistentVolumeClaim summary: binding phase and the storage actually requested --
+    the key signal for diagnosing a pod stuck Pending on an unbound claim."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "phase": status.get("phase"),
+        "storageClassName": spec.get("storageClassName"),
+        "accessModes": spec.get("accessModes", []),
+        "requestedStorage": spec.get("resources", {}).get("requests", {}).get("storage"),
+        "capacity": status.get("capacity", {}),
+    }
+
+
+def _summarize_pv(manifest: dict) -> dict:
+    """PersistentVolume summary: binding phase, capacity, and which claim (if any) it's
+    bound to. Cluster-scoped -- no namespace on its own metadata."""
+    metadata = manifest.get("metadata", {})
+    spec = manifest.get("spec", {})
+    status = manifest.get("status", {})
+    claim_ref = spec.get("claimRef") or {}
+    return {
+        "name": metadata.get("name"),
+        "labels": metadata.get("labels", {}),
+        "phase": status.get("phase"),
+        "capacity": spec.get("capacity", {}),
+        "storageClassName": spec.get("storageClassName"),
+        "reclaimPolicy": spec.get("persistentVolumeReclaimPolicy"),
+        "claimRef": {"namespace": claim_ref.get("namespace"), "name": claim_ref.get("name")},
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:
