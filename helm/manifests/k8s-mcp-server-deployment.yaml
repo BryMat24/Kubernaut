@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubernaut-k8s-mcp-server
+  labels:
+    app.kubernetes.io/name: kubernaut
+    app.kubernetes.io/component: k8s-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kubernaut
+      app.kubernetes.io/component: k8s-mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kubernaut
+        app.kubernetes.io/component: k8s-mcp-server
+    spec:
+      serviceAccountName: kubernaut-k8s-mcp-server
+      containers:
+        - name: k8s-mcp-server
+          image: kubernaut-k8s-mcp-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

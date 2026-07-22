@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-k8s-mcp-server
+  labels:
+    {{- include "kubernaut.labels" . | nindent 4 }}
+    app.kubernetes.io/component: k8s-mcp-server
+spec:
+  replicas: {{ .Values.k8sMcpServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kubernaut.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: k8s-mcp-server
+  template:
+    metadata:
+      labels:
+        {{- include "kubernaut.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: k8s-mcp-server
+    spec:
+      serviceAccountName: {{ .Release.Name }}-k8s-mcp-server
+      containers:
+        - name: k8s-mcp-server
+          image: "{{ .Values.k8sMcpServer.image.repository }}:{{ .Values.k8sMcpServer.image.tag }}"
+          imagePullPolicy: {{ .Values.k8sMcpServer.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.k8sMcpServer.resources | nindent 12 }}
