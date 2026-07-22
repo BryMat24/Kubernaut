@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -188,9 +187,21 @@ def test_find_success(tmp_path: Path):
     cmd = mock_run.call_args.args[0]
     assert cmd == ["find", ".", "-type", "f", "-iname", "deployment.yaml"]
     assert result == [
-        os.path.abspath(os.path.join(str(tmp_path), "./apps/api/deployment.yaml")),
-        os.path.abspath(os.path.join(str(tmp_path), "./apps/frontend/deployment.yaml")),
+        "apps/api/deployment.yaml",
+        "apps/frontend/deployment.yaml",
     ]
+
+
+def test_find_truncates_large_result_sets(tmp_path: Path):
+    stdout = "\n".join(f"./apps/service-{i}/deployment.yaml" for i in range(75))
+    with patch("tools.file_tools.subprocess.run", return_value=make_completed_process(stdout=stdout, returncode=0)):
+        result = find.func(str(tmp_path), "*.yaml")
+
+    assert len(result) == 51
+    assert "75 files matched" in result[0]
+    assert "showing first 50" in result[0]
+    assert result[1] == "apps/service-0/deployment.yaml"
+    assert result[-1] == "apps/service-49/deployment.yaml"
 
 
 def test_find_strips_leading_glob_prefix(tmp_path: Path):

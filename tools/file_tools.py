@@ -5,6 +5,7 @@ import os
 import subprocess
 
 MAX_CHARS = 10_000
+MAX_FIND_RESULTS = 30
 
 
 @tool
@@ -135,7 +136,16 @@ def find(
     for line in result.stdout.splitlines():
         if not line:
             continue
-        files.append(os.path.abspath(os.path.join(working_directory, line)))
+        files.append(line[2:] if line.startswith("./") else line)
+
+    if len(files) > MAX_FIND_RESULTS:
+        truncated = files[:MAX_FIND_RESULTS]
+        truncated.insert(
+            0,
+            f'[{len(files)} files matched "{name_pattern}" -- showing first '
+            f"{MAX_FIND_RESULTS}. Narrow name_pattern to see the rest.]",
+        )
+        return truncated
     return files
 
 
