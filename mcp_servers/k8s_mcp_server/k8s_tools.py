@@ -108,6 +108,45 @@ def _project_resource_summary(manifest: dict) -> dict:
     }
 
 
+def _summarize_container_state(state: dict) -> dict:
+    """Reduce a container's status.state (exactly one of waiting/running/terminated) to
+    its phase name plus reason/exitCode, if present."""
+    if "waiting" in state:
+        return {"status": "waiting", "reason": state["waiting"].get("reason")}
+    if "terminated" in state:
+        return {
+            "status": "terminated",
+            "reason": state["terminated"].get("reason"),
+            "exitCode": state["terminated"].get("exitCode"),
+        }
+    if "running" in state:
+        return {"status": "running"}
+    return {"status": "unknown"}
+
+
+def _summarize_pod(manifest: dict) -> dict:
+    """Pod triage summary: phase plus per-container ready/restartCount/state -- the
+    crash-loop/OOM signal the generic identity-only projection drops entirely."""
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    return {
+        "name": metadata.get("name"),
+        "namespace": metadata.get("namespace"),
+        "labels": metadata.get("labels", {}),
+        "ownerReferences": metadata.get("ownerReferences", []),
+        "phase": status.get("phase"),
+        "containerStatuses": [
+            {
+                "name": c.get("name"),
+                "ready": c.get("ready"),
+                "restartCount": c.get("restartCount"),
+                "state": _summarize_container_state(c.get("state", {})),
+            }
+            for c in status.get("containerStatuses", [])
+        ],
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:

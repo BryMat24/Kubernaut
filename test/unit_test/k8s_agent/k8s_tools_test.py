@@ -185,6 +185,78 @@ def test_strip_manifest_noise_handles_missing_annotations():
 
 
 # ------------------------------------------------------------------
+# _summarize_pod
+# ------------------------------------------------------------------
+
+def test_summarize_container_state_waiting():
+    assert k8s_tools._summarize_container_state({"waiting": {"reason": "CrashLoopBackOff"}}) == {
+        "status": "waiting",
+        "reason": "CrashLoopBackOff",
+    }
+
+
+def test_summarize_container_state_terminated():
+    state = {"terminated": {"reason": "OOMKilled", "exitCode": 137}}
+    assert k8s_tools._summarize_container_state(state) == {
+        "status": "terminated",
+        "reason": "OOMKilled",
+        "exitCode": 137,
+    }
+
+
+def test_summarize_container_state_running():
+    assert k8s_tools._summarize_container_state({"running": {"startedAt": "2026-01-01T00:00:00Z"}}) == {
+        "status": "running",
+    }
+
+
+def test_summarize_container_state_unknown_when_empty():
+    assert k8s_tools._summarize_container_state({}) == {"status": "unknown"}
+
+
+def test_summarize_pod_extracts_phase_and_container_health():
+    manifest = {
+        "metadata": {"name": "backend-6qzrs", "namespace": "dev", "labels": {"app": "backend"}},
+        "spec": {"containers": [{"name": "backend", "image": "backend:v2"}]},
+        "status": {
+            "phase": "Running",
+            "containerStatuses": [
+                {
+                    "name": "backend",
+                    "ready": False,
+                    "restartCount": 269,
+                    "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                }
+            ],
+        },
+    }
+    result = k8s_tools._summarize_pod(manifest)
+    assert result == {
+        "name": "backend-6qzrs",
+        "namespace": "dev",
+        "labels": {"app": "backend"},
+        "ownerReferences": [],
+        "phase": "Running",
+        "containerStatuses": [
+            {"name": "backend", "ready": False, "restartCount": 269, "state": {"status": "waiting", "reason": "CrashLoopBackOff"}}
+        ],
+    }
+    # spec (image, env, resources) is intentionally not part of the pod summary
+    assert "spec" not in result
+
+
+def test_summarize_pod_defaults_missing_fields():
+    assert k8s_tools._summarize_pod({"metadata": {"name": "my-pod"}}) == {
+        "name": "my-pod",
+        "namespace": None,
+        "labels": {},
+        "ownerReferences": [],
+        "phase": None,
+        "containerStatuses": [],
+    }
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 
