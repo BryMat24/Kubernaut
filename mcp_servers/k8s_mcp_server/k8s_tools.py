@@ -392,6 +392,22 @@ def _summarize_job(manifest: dict) -> dict:
     }
 
 
+def _summarize_node(manifest: dict) -> dict:
+    """Node summary: just the Ready condition and schedulability, so listing all nodes
+    quickly flags which ones are NotReady. get_node_conditions remains the tool for a
+    specific node's full conditions/taints/capacity."""
+    metadata = manifest.get("metadata", {})
+    status = manifest.get("status", {})
+    conditions = status.get("conditions", [])
+    ready_condition = next((c for c in conditions if c.get("type") == "Ready"), {})
+    return {
+        "name": metadata.get("name"),
+        "labels": metadata.get("labels", {}),
+        "ready": ready_condition.get("status"),
+        "unschedulable": manifest.get("spec", {}).get("unschedulable", False),
+    }
+
+
 # DISCOVERY
 @mcp.tool
 def list_namespaces() -> list[dict]:

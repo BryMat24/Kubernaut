@@ -603,6 +603,36 @@ def test_summarize_job_defaults_missing_fields():
 
 
 # ------------------------------------------------------------------
+# _summarize_node
+# ------------------------------------------------------------------
+
+def test_summarize_node_extracts_ready_condition_and_schedulability():
+    manifest = {
+        "metadata": {"name": "minikube", "labels": {"kubernetes.io/hostname": "minikube"}},
+        "spec": {"unschedulable": False},
+        "status": {
+            "conditions": [
+                {"type": "MemoryPressure", "status": "False"},
+                {"type": "Ready", "status": "True"},
+            ]
+        },
+    }
+    result = k8s_tools._summarize_node(manifest)
+    assert result == {
+        "name": "minikube",
+        "labels": {"kubernetes.io/hostname": "minikube"},
+        "ready": "True",
+        "unschedulable": False,
+    }
+
+
+def test_summarize_node_defaults_when_no_ready_condition_present():
+    result = k8s_tools._summarize_node({"metadata": {"name": "n"}})
+    assert result["ready"] is None
+    assert result["unschedulable"] is False
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 
