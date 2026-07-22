@@ -10,7 +10,7 @@ import logging
 from dotenv import load_dotenv
 from models import DiagnosisResult
 
-from .helpers import Classifier
+from .helpers import Classifier, HistoryCompactor
 from graph.state import DiagnosisAgentState
 
 load_dotenv()
@@ -90,6 +90,7 @@ class DiagnosisAgent:
             Once the root cause is found, provide the explanation of the root cause
         """
         self.classifier = Classifier(llm)
+        self.history_compactor = HistoryCompactor(llm)
         self.graph = self._build_graph()
 
     def _build_graph(self) -> CompiledStateGraph:
@@ -116,15 +117,19 @@ class DiagnosisAgent:
 
         system_prompt = f"{self.SYSTEM_PROMPT}\n\nquery:\n{state['query']}"
 
-        messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        history, compaction_edits = self.history_compactor.compact(state["messages"])
+        messages = [SystemMessage(content=system_prompt)] + history
         response = self.llm.invoke(messages)
 
         if response.tool_calls:
             for call in response.tool_calls:
                 self.logger.info(f"  agent -> {call['name']}({call['args']})")
 
+        if compaction_edits:
+            self.logger.info(f"  compacted {len(compaction_edits) - 1} old messages into a summary")
+
         return {
-            "messages": [response],
+            "messages": [*compaction_edits, response],
             "iteration_count": iteration,
         }
     
