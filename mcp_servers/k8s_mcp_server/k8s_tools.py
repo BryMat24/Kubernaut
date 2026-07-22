@@ -124,7 +124,7 @@ def get_resource(
     Example: kubectl get deployment my-app -n default -o json
 
     Use when: you already know the resource's kind, name, and namespace and need its exact
-    current configuration (image, replicas, env vars, selectors, labels). For human-readable
+    current configuration (image, replicas, env vars, selectors, labels, detailed spec of the resource such as resource limits, volumes). For human-readable
     runtime diagnostics (conditions, restart counts, recent events) use describe_resource
     instead — this tool returns the structured manifest, not runtime state explanations.
 
@@ -143,7 +143,7 @@ def get_resource(
         check=True,
     )
 
-    return _project_resource_summary(json.loads(result.stdout))
+    return result.stdout
 
 
 @mcp.tool
