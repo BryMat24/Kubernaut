@@ -53,21 +53,27 @@ class HistoryCompactor:
     def _char_count(messages: list[BaseMessage]) -> int:
         return sum(len(str(m.content)) for m in messages)
 
-    @traceable(name="history_compaction")
+    @traceable(name="history_compaction", run_type="llm")
     def _summarize(self, messages: list[BaseMessage]) -> str:
         transcript = "\n".join(self._render(m) for m in messages)
         prompt = f"""
-        Summarize the following tool-use transcript from an autonomous coding agent's
-        session so far, so the agent can continue correctly without the raw transcript.
+        Summarize the following tool-use transcript from an autonomous agent's session so
+        far, so the agent can continue correctly without the raw transcript.
 
-        Preserve every concrete fact a continuation would need:
-        - every file that was read, edited, or written, and the resulting/current
-          content or the key change made to it
+        Preserve every concrete fact a continuation would need -- this varies by agent, so
+        include whichever of these actually appear in the transcript:
+        - every file read, edited, or written, and the resulting/current content or the
+          key change made to it
+        - every piece of evidence gathered (tool outputs, observed state, error messages)
+          and what it showed
         - every error or rejected action, and why it was rejected
-        - any conclusions already reached (e.g. "step 2 is already correct, do not repeat it")
+        - any root cause, hypothesis, or decision already reached, stated exactly as found
 
-        Do not editorialize or add commentary beyond what's needed to continue the work
-        correctly. Be concise, but do not drop any file path, value, or error message.
+        Do not add a closing judgment about whether the task is "done" or "concluded" --
+        state only the facts gathered; the agent itself decides what they mean and whether
+        more investigation is needed. Do not editorialize or add commentary beyond what's
+        needed to continue correctly. Be concise, but do not drop any file path, value,
+        root cause, or error message.
 
         Transcript:
         {transcript}

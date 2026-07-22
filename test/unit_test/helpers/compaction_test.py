@@ -74,6 +74,28 @@ def test_compact_keeps_pair_boundaries_intact():
     assert [m.id for m in history[1:]] == ["ai-3", "tool-3", "ai-4", "tool-4"]
 
 
+def test_summarize_prompt_does_not_request_a_completion_judgment():
+    # Regression test: the summarizer prompt used to ask for "conclusions already
+    # reached (e.g. 'step 2 is already correct, do not repeat it')" -- a RemediationAgent
+    # step-completion framing that doesn't exist for other agents (e.g. DiagnosisAgent,
+    # which has no "steps"). Given a transcript with nothing step-shaped to report, the
+    # summarizer defaulted to a literal "No conclusions reached yet" closing line, even
+    # when the same summary had just stated a full root cause -- misleading the agent
+    # into believing nothing was found and looping past the point it already had an
+    # answer. The prompt must not ask for this judgment at all.
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="summary")
+    compactor = HistoryCompactor(llm, threshold_chars=50, keep_recent_pairs=1)
+
+    messages = _pair(1) + _pair(2) + _pair(3)
+    compactor.compact(messages)
+
+    prompt = llm.invoke.call_args.args[0]
+    assert "coding agent" not in prompt
+    assert "step 2 is already correct" not in prompt
+    assert "Do not add a closing judgment" in prompt
+
+
 def test_compact_never_splits_a_parallel_tool_call_turn():
     # A turn with parallel tool calls produces 1 AIMessage + 2 ToolMessages (3 messages,
     # not 2), so a fixed message-count slice from the end can land inside it and split
