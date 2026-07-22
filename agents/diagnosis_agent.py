@@ -72,7 +72,7 @@ class DiagnosisAgent:
             discrepancy before concluding — don't silently pick whichever result
             came first.
             - For HorizontalPodAutoscaler (HPA) issues, inspect both the HPA's own
-            status/conditions (get_resource or describe_resource, kind=hpa) AND the
+            status/conditions (describe_resource, kind=hpa) AND the
             scale target's container resources.requests (describe_resource,
             kind=deployment). An HPA reporting an unknown or missing
             current metric is frequently NOT caused by the metrics-server being down
