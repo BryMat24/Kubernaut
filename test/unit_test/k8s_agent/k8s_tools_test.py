@@ -124,6 +124,67 @@ def test_project_resource_summary_handles_missing_metadata():
 
 
 # ------------------------------------------------------------------
+# _strip_manifest_noise
+# ------------------------------------------------------------------
+
+def test_strip_manifest_noise_removes_last_applied_configuration_annotation():
+    manifest = {
+        "metadata": {
+            "name": "backend-deployment",
+            "annotations": {
+                "deployment.kubernetes.io/revision": "11",
+                "kubectl.kubernetes.io/last-applied-configuration": '{"apiVersion":"apps/v1"}',
+            },
+        },
+    }
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert "kubectl.kubernetes.io/last-applied-configuration" not in result["metadata"]["annotations"]
+    assert result["metadata"]["annotations"]["deployment.kubernetes.io/revision"] == "11"
+
+
+def test_strip_manifest_noise_removes_request_bookkeeping_fields():
+    manifest = {
+        "metadata": {
+            "name": "backend-deployment",
+            "resourceVersion": "133392",
+            "uid": "21dbb296-2146-415f-b21c-34e546c82e81",
+            "generation": 12,
+        },
+    }
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert "resourceVersion" not in result["metadata"]
+    assert "uid" not in result["metadata"]
+    assert "generation" not in result["metadata"]
+    assert result["metadata"]["name"] == "backend-deployment"
+
+
+def test_strip_manifest_noise_removes_managed_fields():
+    manifest = {"metadata": {"name": "my-pod", "managedFields": [{"manager": "kubectl"}]}}
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert "managedFields" not in result["metadata"]
+
+
+def test_strip_manifest_noise_keeps_spec_and_status_intact():
+    manifest = {
+        "metadata": {"name": "backend-deployment"},
+        "spec": {"replicas": 3, "template": {"spec": {"containers": [{"image": "backend:v2"}]}}},
+        "status": {"readyReplicas": 1, "conditions": [{"type": "Available", "status": "False"}]},
+    }
+    result = k8s_tools._strip_manifest_noise(manifest)
+    assert result["spec"] == manifest["spec"]
+    assert result["status"] == manifest["status"]
+
+
+def test_strip_manifest_noise_handles_missing_metadata():
+    assert k8s_tools._strip_manifest_noise({"kind": "Pod"}) == {"kind": "Pod"}
+
+
+def test_strip_manifest_noise_handles_missing_annotations():
+    manifest = {"metadata": {"name": "my-pod"}}
+    assert k8s_tools._strip_manifest_noise(manifest) == {"metadata": {"name": "my-pod"}}
+
+
+# ------------------------------------------------------------------
 # get_resource
 # ------------------------------------------------------------------
 
@@ -196,6 +257,37 @@ def test_get_resource_clusterrolebinding_omits_namespace_flag(mock_run):
         text=True,
         check=True,
     )
+
+
+def test_get_resource_strips_last_applied_configuration_and_bookkeeping(mock_run):
+    manifest = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": "backend-deployment",
+            "namespace": "dev",
+            "resourceVersion": "133392",
+            "uid": "21dbb296-2146-415f-b21c-34e546c82e81",
+            "generation": 12,
+            "annotations": {
+                "deployment.kubernetes.io/revision": "11",
+                "kubectl.kubernetes.io/last-applied-configuration": '{"apiVersion":"apps/v1"}',
+            },
+        },
+        "spec": {"replicas": 3},
+        "status": {"readyReplicas": 1},
+    }
+    mock_run.return_value = make_completed_process(stdout=json.dumps(manifest))
+
+    result = k8s_tools.get_resource(ResourceKind.DEPLOYMENT, "backend-deployment", "dev")
+
+    assert "resourceVersion" not in result["metadata"]
+    assert "uid" not in result["metadata"]
+    assert "generation" not in result["metadata"]
+    assert "kubectl.kubernetes.io/last-applied-configuration" not in result["metadata"]["annotations"]
+    assert result["metadata"]["annotations"]["deployment.kubernetes.io/revision"] == "11"
+    assert result["spec"] == {"replicas": 3}
+    assert result["status"] == {"readyReplicas": 1}
 
 
 # ------------------------------------------------------------------
