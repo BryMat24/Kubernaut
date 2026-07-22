@@ -81,12 +81,40 @@ ownership ledger, often the single largest part of the object), `resourceVersion
    structuring the final verdict. If root cause 1 is fixed, this cost drops automatically, since
    `finalize_node` reads from the same (now-compacted) `state["messages"]`.
 
-3. **`list_resources` returns raw, unfiltered `kubectl -o json` with no size cap.**
-   (`mcp_servers/k8s_mcp_server/k8s_tools.py:132-164`). This is what turned one single tool call
-   into an 11k-token jump — the largest single contributor in the trace. Other tools in the same
-   file (`get_events`, `get_previous_logs`, `oom_killed_pods`, `get_resource`) stayed in the
-   hundreds-to-low-thousands of characters in this run, so they aren't ruled out as similarly
-   unbounded, but this trace's evidence points squarely at `list_resources`.
+3. **The k8s tools hand the LLM raw `kubectl` output instead of the information it actually
+   needs.** `list_resources` is the trace's concrete evidence (11k-token jump from one call), but
+   it's a symptom of a design gap, not a one-off: several tools in
+   `mcp_servers/k8s_mcp_server/k8s_tools.py` pass `kubectl`'s own output straight through
+   (`json.loads(result.stdout)` verbatim, or `result.stdout` as raw text) with no projection down
+   to what's diagnostically relevant. Flagged as potentially high-token by the same pattern,
+   beyond `list_resources`:
+
+   - **`list_resources`** (`k8s_tools.py:132-164`): `return data.get("items", [])` — every item's
+     complete manifest, unfiltered.
+   - **`describe_resource`** (`k8s_tools.py:167-198`): `return result.stdout` — `kubectl describe`'s
+     full multi-section text verbatim (Labels, Annotations, entire spec, Conditions, Volumes,
+     Tolerations, and its own trailing Events section, which duplicates the dedicated
+     `get_events` tool).
+   - **`get_pod_logs`** (`k8s_tools.py:254-282`) and **`get_previous_logs`**
+     (`k8s_tools.py:285-313`): `return result.stdout` — bounded by *line count* (`tail=100`
+     default) but not by *character count*; a handful of long JSON-formatted or stack-trace log
+     lines can still be arbitrarily large.
+   - **`get_events`** (`k8s_tools.py:202-250`) already projects each item down to
+     `timestamp`/`type`/`reason`/`involved_object`/`message` — the one tool here doing this
+     correctly — but has no cap on the *number* of events returned, so a busy namespace can still
+     produce a large payload even with per-item projection already in place.
+
+   (`get_resource`, `k8s_tools.py:97-128`, has the identical raw-manifest problem as
+   `list_resources` for a single object — not in the flagged list, but the same root cause and
+   worth including if the flagged tools are addressed.)
+
+   Two specific, very common `kubectl -o json` bloat sources worth naming directly, since they
+   recur across every one of these: **`metadata.managedFields`** (a full per-field-manager
+   ownership ledger, often the single largest field on the object) and the
+   **`kubectl.kubernetes.io/last-applied-configuration` annotation** (set by `kubectl apply` —
+   embeds a complete second JSON copy of the object's last-applied config as a string annotation,
+   effectively doubling the object's size whenever present, e.g. on anything managed by the
+   GitOps repo this system itself operates on).
 
 4. **Fixed ~3-4k token tool-schema floor on every call**, from binding all 17 k8s+PromQL tools
    regardless of investigation stage. This compounds root cause 1's growth rather than being a
@@ -106,11 +134,36 @@ this is exactly the reuse case it was designed for. This alone should flatten th
 growth curve into a bounded cost per turn, and (via root cause 2) shrinks `finalize_node`'s cost
 for free.
 
-**Fix root cause 3:** cap/filter `list_resources`'s output — at minimum strip
-`metadata.managedFields` from each item before returning (it carries no diagnostic value and is
-frequently the largest field on the object), and consider a `MAX_CHARS`-style truncation-with-marker
-matching `read_file_content`'s existing pattern for the rare case a namespace has enough resources
-to still be huge after that.
+**Fix root cause 3 (general principle, not just `list_resources`):** the LLM should never see raw
+`kubectl` output — every k8s tool should return only the fields a diagnosis actually needs, the
+same way `get_events`/`top_pods`/`top_nodes`/`get_node_conditions`/`rollout_status`/
+`check_service_connectivity` already do (all of them build a small, curated dict instead of
+returning `kubectl`'s output verbatim — these are the existing pattern to follow, not a new one).
+Per flagged tool:
+
+- **`list_resources`** / **`get_resource`**: strip `metadata.managedFields` and the
+  `kubectl.kubernetes.io/last-applied-configuration` annotation from every item before returning
+  (both are pure noise, never useful for diagnosis, and are frequently the largest fields on the
+  object). Beyond that, project to a smaller field set: `metadata.name/namespace/labels/
+  creationTimestamp`, `spec` (needed for image/replicas/selectors/resource requests), and
+  `status` minus deeply-nested low-value sub-objects — rather than the complete manifest.
+- **`describe_resource`**: strip the `Annotations:` block (same `last-applied-configuration`
+  bloat risk as above, since `kubectl describe` prints annotations in full) and the trailing
+  `Events:` section (redundant with the dedicated `get_events` tool). A further, larger step would
+  be parsing `describe`'s text into a structured summary (conditions, container states, restart
+  counts) instead of returning free text at all — worth doing, but a bigger lift than the
+  section-stripping above.
+- **`get_pod_logs`** / **`get_previous_logs`**: add a `MAX_CHARS`-style truncation-with-marker,
+  matching `tools/file_tools.py`'s `read_file_content` convention that already exists elsewhere in
+  this codebase — the current `tail=100` line cap doesn't bound total characters when individual
+  lines are long.
+- **`get_events`**: already does correct per-item field projection — add a cap on the *number* of
+  events returned (e.g. keep only the most recent N; it already sorts by `lastTimestamp`, so this
+  is a small change) for the busy-namespace case.
+
+Apply this as a single shared design principle across the tool file, not five one-off patches:
+before returning anything to the LLM, project down to information relevant to diagnosis and drop
+everything else.
 
 **Investigate root cause 4 as a follow-up, not a first fix:** measure whether a smaller,
 stage-appropriate tool subset (e.g. not binding PromQL tools when the query is purely
@@ -120,8 +173,12 @@ this trace doesn't have enough evidence to size the win.
 ## Suggested priority
 
 1. Wire `HistoryCompactor` into `DiagnosisAgent` (fixes 1 and 2 together, reuses existing code).
-2. Trim/cap `list_resources`'s output (fixes the single largest one-shot jump).
-3. Investigate whether other k8s tools (`describe_resource`, `get_events` at scale) need the same
-   cap — not evidenced as a problem in this trace, but same class of risk as `list_resources`.
-4. Investigate tool-schema-floor reduction (root cause 4) only after 1-2 land, since it's the
+2. Project `list_resources`/`get_resource` output down to relevant fields, stripping
+   `managedFields`/`last-applied-configuration` (fixes the single largest one-shot jump, and its
+   twin single-object tool).
+3. Apply the same projection principle to `describe_resource`, `get_pod_logs`/`get_previous_logs`
+   (char cap), and `get_events` (count cap) — same design, not evidenced as this trace's biggest
+   contributor individually, but the same class of risk and worth closing as one pass across the
+   tool file rather than waiting for each to show up in a future trace.
+4. Investigate tool-schema-floor reduction (root cause 4) only after 1-3 land, since it's the
    smallest and least-evidenced contributor here.
