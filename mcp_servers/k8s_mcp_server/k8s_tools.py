@@ -153,13 +153,19 @@ def list_resources(
     label_selector: Annotated[str | None, "Label selector to filter results, e.g. app=my-service."] = None,
 ) -> list[dict]:
     """
-    List Kubernetes resources of a given kind, for discovery before inspecting individual resources.
+    List Kubernetes resources of a given kind, for discovery before inspecting individual
+    resources. Returns a minimal identity projection per resource — name, namespace, labels,
+    creationTimestamp, ownerReferences — not the full manifest. For spec/status detail (image,
+    replicas, conditions) on a specific resource, use describe_resource once you've found it
+    here.
 
     Example: kubectl get pod -n default -o json
     Example (filtered by label): kubectl get pod -n default -l app=my-service -o json
 
     Use when: you know the kind but not the exact resource name yet — e.g. finding which pods
-    exist in a namespace before drilling into one with get_resource or describe_resource.
+    exist in a namespace, or tracing an ownership chain (ownerReferences) from a Pod to its
+    ReplicaSet/Deployment — before drilling into one with get_resource (exact identity) or
+    describe_resource (runtime detail).
 
     Note: namespace is ignored for cluster-scoped kinds (Node, PersistentVolume,
     StorageClass, ClusterRole, ClusterRoleBinding).
