@@ -73,8 +73,8 @@ class DiagnosisAgent:
             came first.
             - For HorizontalPodAutoscaler (HPA) issues, inspect both the HPA's own
             status/conditions (get_resource or describe_resource, kind=hpa) AND the
-            scale target's container resources.requests (get_resource or
-            list_resources, kind=deployment). An HPA reporting an unknown or missing
+            scale target's container resources.requests (describe_resource,
+            kind=deployment). An HPA reporting an unknown or missing
             current metric is frequently NOT caused by the metrics-server being down
             — it is very often caused by the target container missing a
             resources.requests entry for the metric being scaled on (e.g. no CPU
