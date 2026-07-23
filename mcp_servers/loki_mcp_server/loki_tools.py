@@ -68,7 +68,7 @@ def recent_logs(
     return _range_query(logql, minutes=60, limit=lines)
 
 
-@mcp.tools
+@mcp.tool
 def error_logs(
     app: Annotated[str, "Value of the app label identifying the workload."],
     namespace: Annotated[str, "Namespace containing the workload."] = "default",
