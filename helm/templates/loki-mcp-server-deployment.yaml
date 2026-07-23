@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-loki-mcp-server
+  labels:
+    {{- include "kubernaut.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki-mcp-server
+spec:
+  replicas: {{ .Values.lokiMcpServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kubernaut.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: loki-mcp-server
+  template:
+    metadata:
+      labels:
+        {{- include "kubernaut.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: loki-mcp-server
+    spec:
+      containers:
+        - name: loki-mcp-server
+          image: "{{ .Values.lokiMcpServer.image.repository }}:{{ .Values.lokiMcpServer.image.tag }}"
+          imagePullPolicy: {{ .Values.lokiMcpServer.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: LOKI_URL
+              value: {{ .Values.lokiMcpServer.lokiUrl | quote }}
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.lokiMcpServer.resources | nindent 12 }}

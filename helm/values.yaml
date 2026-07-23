@@ -55,3 +55,18 @@ prometheusMcpServer:
         limits:
             cpu: 500m
             memory: 512Mi
+
+lokiMcpServer:
+    image:
+        repository: brymat24/loki_mcp
+        tag: latest
+        pullPolicy: IfNotPresent
+    replicaCount: 1
+    lokiUrl: http://loki.dev-monitoring.svc.cluster.local:3100
+    resources:
+        requests:
+            cpu: 100m
+            memory: 128Mi
+        limits:
+            cpu: 500m
+            memory: 512Mi

@@ -28,6 +28,8 @@ spec:
               value: http://{{ .Release.Name }}-k8s-mcp-server:8000/mcp
             - name: PROMETHEUS_MCP_SERVER_URL
               value: http://{{ .Release.Name }}-prometheus-mcp-server:8000/mcp
+            - name: LOKI_MCP_SERVER_URL
+              value: http://{{ .Release.Name }}-loki-mcp-server:8000/mcp
           envFrom:
             - secretRef:
                 name: {{ .Values.api.existingSecret }}
