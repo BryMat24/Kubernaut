@@ -23,6 +23,12 @@ spec:
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           ports:
             - containerPort: 3000
+          env:
+            # Read at request time by app/api/proxy/[...path]/route.ts, which
+            # runs server-side in this pod and forwards browser requests to
+            # the real api Service -- the browser itself never sees this URL.
+            - name: API_URL
+              value: http://{{ .Release.Name }}-api:8000
           readinessProbe:
             httpGet:
               path: /

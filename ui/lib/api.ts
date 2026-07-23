@@ -1,4 +1,7 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9000";
+// Relative path handled by app/api/proxy/[...path]/route.ts, which runs
+// server-side in the ui pod and forwards to the real API_URL at request
+// time -- keeps the browser bundle free of any backend URL.
+const API_URL = "/api/proxy";
 
 export interface ChatSummary {
   id: string;
