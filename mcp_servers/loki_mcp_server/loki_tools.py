@@ -4,6 +4,7 @@ from typing import Annotated
 
 import requests
 from fastmcp import FastMCP
+import json
 
 mcp = FastMCP("loki-tools")
 
@@ -36,9 +37,13 @@ def _range_query(logql: str, minutes: int, limit: int) -> list[dict]:
 
     lines = []
     for stream in payload["data"]["result"]:
-        labels = stream.get("stream", {})
         for ts, line in stream.get("values", []):
-            lines.append({"timestamp": ts, "line": line, "labels": labels})
+            log = json.loads(line)
+            truncated_log = {
+                key: (val[:100] if isinstance(val, str) else val) 
+                for key, val in log.items()
+            }
+            lines.append(truncated_log)
 
     lines.sort(key=lambda entry: entry["timestamp"], reverse=True)
     return lines[:limit]
@@ -63,7 +68,7 @@ def recent_logs(
     return _range_query(logql, minutes=60, limit=lines)
 
 
-@mcp.tool
+@mcp.tools
 def error_logs(
     app: Annotated[str, "Value of the app label identifying the workload."],
     namespace: Annotated[str, "Namespace containing the workload."] = "default",
@@ -73,7 +78,7 @@ def error_logs(
     Retrieve log lines matching error/exception/panic/fatal patterns across all pods of a
     workload, over a recent time window.
 
-    LogQL: {app="$app", namespace="$namespace"} |~ "(?i)error|exception|panic|fatal"
+    LogQL: {app="$app", namespace="$namespace"} |~ "(?i)error|exception"
 
     Use when: confirming whether a workload is actually logging failures -- e.g. after a
     Prometheus metric (error_rate, latency_p95) shows a symptom but Kubernetes-level evidence
