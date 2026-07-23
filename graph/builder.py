@@ -3,7 +3,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from dotenv import load_dotenv
-from mcp_clients import get_k8s_mcp_tools, get_promql_mcp_tools
+from mcp_clients import get_k8s_mcp_tools, get_promql_mcp_tools, get_loki_mcp_tools
 from tools.file_tools import (
     list_files_in_directory,
     read_file_content,
@@ -45,9 +45,10 @@ load_dotenv()
 async def init_diagnosis_agent() -> DiagnosisAgent:
     k8s_tools = await get_k8s_mcp_tools()
     promql_tools = await get_promql_mcp_tools()
+    loki_tools = await get_loki_mcp_tools()
     return DiagnosisAgent(
         diagnosis_llm,
-        k8s_tools + promql_tools,
+        k8s_tools + promql_tools + loki_tools,
         classifier_llm=classifier_llm,
         compactor_llm=compactor_llm,
     )
