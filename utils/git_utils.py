@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import fcntl
@@ -66,9 +67,19 @@ def repo_lock(repo_url: str):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def _is_valid_git_dir(path: str) -> bool:
+    result = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=path, capture_output=True, text=True)
+    return result.returncode == 0
+
+
 def ensure_base_clone(repo_url: str, base: str = "main") -> str:
     os.makedirs(REPOS_DIR, exist_ok=True)
     bare_path = os.path.join(REPOS_DIR, f"{_repo_slug(repo_url)}.git")
+    # A cache directory can exist but be a corrupted/incomplete repo (e.g. a file like
+    # HEAD swept by an OS temp-directory cleanup, or an interrupted clone) -- isdir()
+    # alone can't tell the difference, so re-clone whenever the git-dir check fails.
+    if os.path.isdir(bare_path) and not _is_valid_git_dir(bare_path):
+        shutil.rmtree(bare_path)
     if not os.path.isdir(bare_path):
         run(["git", "clone", "--bare", repo_url, bare_path], REPOS_DIR)
     else:

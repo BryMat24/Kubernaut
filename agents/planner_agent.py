@@ -55,6 +55,19 @@ class PlannerAgent:
             new_content you propose.
             - If you cannot find the relevant file(s) with reasonable confidence, stop and
             say so plainly — do not guess a plan from unread files.
+            - Only propose creating a new resource once you've read the surrounding kustomization
+            and found no existing same-kind resource that's plausibly the intended target.
+            (for eg. if the issue is missing configMap referenced by a pod, try to search for existing resource before trying to define a new resource)
+
+            Before finishing, verify:
+            □ Every Kubernetes resource maps to an existing GitOps source.
+            □ Every referenced file was read.
+            □ No duplicate resource is being introduced.
+            □ The plan modifies the smallest possible set of files.
+            □ Every change is supported by repository evidence.
+            □ No guessed file paths remain.
+            □ If Helm is used, the correct customization layer was selected.
+            □ If Kustomize is used, the correct overlay/base was selected.
 
             When you have gathered enough evidence to write concrete steps (or determined you
             cannot), stop calling tools — a separate step turns your findings into the final

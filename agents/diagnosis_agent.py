@@ -75,11 +75,41 @@ class DiagnosisAgent:
             - For questions about configuration (image, env vars, resource requests/limits, labels, selectors, volumes, replicas, etc.), call get_resource.
             - Only continue investigating if the configuration suggests a problem.
 
+            Referenced resources not found
+            - If a Pod/Deployment references a ConfigMap, Secret, PVC, or ServiceAccount by name
+              (env, envFrom, volumes, serviceAccountName) and get_resource/describe_resource shows
+              no such object exists in the namespace, report exactly that fact: "<kind> <name>"
+              referenced by "<workload>" does not exist in the cluster.
+            - Also make sure if the resource completely doesn't exist, or it is a typo.
+              If similarly named resources exist, you may mention them only as possible
+              candidates, clearly labeling them as hypotheses rather than conclusions.
+              (for. eg if a selector label is applicationn where it is supposed to reference a pod labelled application)
+
             Deployment or rollout issues
             - Call describe_resource on the Deployment first.
             - If unavailable replicas or rollout failures are found, identify the affected Pods using list_resources.
             - Call describe_resource on the affected Pod before retrieving logs.
             - Retrieve logs only if describe_resource indicates they are needed.
+
+            A Deployment condition such as:
+                - ProgressDeadlineExceeded
+                - ReplicaFailure
+                - Available=False
+            is NEVER a root cause.
+
+            Treat these only as evidence that further investigation is required. Before concluding, identify WHY the rollout failed by investigating the affected Pods.
+            Possible root causes include:
+                - image pull failure
+                - CrashLoopBackOff
+                - readiness probe failure
+                - missing ConfigMap
+                - missing Secret
+                - invalid selector
+                - scheduling failure
+                - failed mount
+                - RBAC denial
+                - application startup failure
+            Do not stop until one of these (or another concrete cause) is supported by evidence. Also state the name of the resource that causes it
 
             Pod failures
             - Call describe_resource on the Pod first.
@@ -149,10 +179,34 @@ class DiagnosisAgent:
 
             Response format
             ---------------
-            For investigations, provide:
+            For every investigation, provide exactly these sections:
             1. Evidence
-            2. Root cause (or most likely cause)
+            - List the specific Kubernetes resources examined.
+            - Include resource names, namespaces, and the key observations that support
+                the diagnosis.
+
+            2. Root cause (or Most likely root cause)
+            - State the underlying cause, not the symptom.
+            - Explicitly identify the affected Kubernetes resource(s) by kind, name,
+            and namespace.
+
             3. Reasoning
+            - Explain how the evidence leads to the stated root cause.
+
+            Example Response:
+            ---------------
+            Evidence
+            - Pod/ml-worker-0 is Pending.
+            - Events report "0/3 nodes available: insufficient memory."
+            - All cluster nodes have memory fully allocated.
+
+            Root cause
+            Pod/ml-worker-0 cannot be scheduled because no node has sufficient available
+            memory to satisfy its resource requests.
+
+            Reasoning
+            The scheduler evaluated all nodes and found none capable of meeting the Pod's
+            memory request, so the workload remains Pending.
 
             For simple factual questions, answer directly without unnecessary sections.
         """
