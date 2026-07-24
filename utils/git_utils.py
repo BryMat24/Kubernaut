@@ -19,6 +19,20 @@ def run(cmd: list[str], cwd: str) -> str:
     return result.stdout.strip()
 
 
+def _ensure_gh_git_auth(cwd: str) -> None:
+    # Registers gh as git's credential helper so GH_TOKEN also covers plain git
+    # operations (clone/fetch/push), not just `gh` calls -- without this, git has no
+    # concept of GH_TOKEN and fails with "could not read Username for 'https://...'".
+    # Best-effort: if gh isn't installed or never authenticated (e.g. a local dev
+    # machine with no GH_TOKEN), this fails silently rather than blocking every git
+    # operation -- the actual git command that follows will surface its own clear
+    # error if credentials genuinely turn out to be required (e.g. a private repo).
+    try:
+        run(["gh", "auth", "setup-git"], cwd)
+    except Exception:
+        pass
+
+
 def get_changed_files(repo: str) -> list[str]:
     run(["git", "add", "-A"], repo)
     output = run(["git", "diff", "--cached", "--name-only"], repo)
@@ -43,11 +57,7 @@ def open_pull_request(
     body: str,
     base: str = "main",
 ) -> str:
-    # `gh` reads GH_TOKEN directly and needs no setup of its own, but plain `git push`
-    # has no concept of GH_TOKEN -- without this, push fails with "could not read
-    # Username for 'https://github.com'" even though GH_TOKEN is set, since nothing
-    # ever wired it into git's own credential lookup. Idempotent, safe to call every time.
-    run(["gh", "auth", "setup-git"], repo)
+    _ensure_gh_git_auth(repo)
     run(["git", "add", "-A"], repo)
     run(["git", "commit", "-m", commit_message], repo)
     run(["git", "push", "-u", "origin", branch], repo)
@@ -79,6 +89,7 @@ def _is_valid_git_dir(path: str) -> bool:
 
 def ensure_base_clone(repo_url: str, base: str = "main") -> str:
     os.makedirs(REPOS_DIR, exist_ok=True)
+    _ensure_gh_git_auth(REPOS_DIR)
     bare_path = os.path.join(REPOS_DIR, f"{_repo_slug(repo_url)}.git")
     # A cache directory can exist but be a corrupted/incomplete repo (e.g. a file like
     # HEAD swept by an OS temp-directory cleanup, or an interrupted clone) -- isdir()

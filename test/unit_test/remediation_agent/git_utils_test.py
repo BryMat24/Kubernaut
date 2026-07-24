@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from utils.git_utils import ensure_base_clone, open_pull_request
+from utils.git_utils import _ensure_gh_git_auth, ensure_base_clone, open_pull_request
 
 
 def _make_origin_repo(path: Path) -> str:
@@ -65,3 +65,23 @@ def test_open_pull_request_sets_up_gh_auth_before_pushing():
     assert commands[0] == ["gh", "auth", "setup-git"]
     assert ["git", "push", "-u", "origin", "branch"] in commands
     assert commands.index(["gh", "auth", "setup-git"]) < commands.index(["git", "push", "-u", "origin", "branch"])
+
+
+def test_ensure_base_clone_sets_up_gh_auth_before_cloning(tmp_path: Path, monkeypatch):
+    origin = _make_origin_repo(tmp_path / "origin")
+    monkeypatch.setattr("utils.git_utils.REPOS_DIR", str(tmp_path / "cache"))
+
+    with patch("utils.git_utils._ensure_gh_git_auth") as mock_auth:
+        ensure_base_clone(origin)
+
+    # Same gap as the push path: a private repo_url's `git clone`/`git fetch` would fail
+    # the same way without this, and it must run before the clone actually happens.
+    mock_auth.assert_called_once()
+
+
+def test_ensure_gh_git_auth_is_best_effort_and_never_raises():
+    # If gh isn't installed/authenticated (e.g. a local dev machine with no GH_TOKEN),
+    # this must fail silently -- it should never block the actual git operation that
+    # follows, which will surface its own clear error if credentials are truly needed.
+    with patch("utils.git_utils.run", side_effect=RuntimeError("gh: not logged in")):
+        _ensure_gh_git_auth("/some/path")  # must not raise
