@@ -2,7 +2,7 @@ api:
     image:
         repository: brymat24/api
         tag: latest
-        pullPolicy: IfNotPresent
+        pullPolicy: Always
     replicaCount: 1
     existingSecret: kubernaut-api-secrets
     resources:
@@ -17,7 +17,7 @@ ui:
     image:
         repository: brymat24/ui
         tag: latest
-        pullPolicy: IfNotPresent
+        pullPolicy: Always
     replicaCount: 1
     resources:
         requests:
@@ -31,7 +31,7 @@ k8sMcpServer:
     image:
         repository: brymat24/k8s_mcp
         tag: latest
-        pullPolicy: IfNotPresent
+        pullPolicy: Always
     replicaCount: 1
     resources:
         requests:
@@ -45,7 +45,7 @@ prometheusMcpServer:
     image:
         repository: brymat24/prometheus_mcp
         tag: latest
-        pullPolicy: IfNotPresent
+        pullPolicy: Always
     replicaCount: 1
     prometheusUrl: http://prometheus-kube-prometheus-prometheus.dev-monitoring.svc.cluster.local:9090
     resources:
@@ -60,7 +60,7 @@ lokiMcpServer:
     image:
         repository: brymat24/loki_mcp
         tag: latest
-        pullPolicy: IfNotPresent
+        pullPolicy: Always
     replicaCount: 1
     lokiUrl: http://loki.dev-monitoring.svc.cluster.local:3100
     resources:
