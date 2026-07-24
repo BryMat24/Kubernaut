@@ -17,6 +17,8 @@ from graph.nodes import (
     make_planner_node,
     human_approval_node,
     require_remediation_routing_node,
+    planning_outcome_routing,
+    missing_info_node,
     approval_routing,
     make_remediate_node,
 )
@@ -104,6 +106,7 @@ async def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Compil
     graph = StateGraph(state_schema=OrchestratorState)
     graph.add_node("diagnosis_agent", make_diagnose_node(diagnosis_agent))
     graph.add_node("planner_agent", make_planner_node(planner_agent))
+    graph.add_node("missing_info_node", missing_info_node)
     graph.add_node("human_approval_node", human_approval_node)
     graph.add_node("remediation_agent", make_remediate_node(remediation_agent))
 
@@ -113,7 +116,12 @@ async def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> Compil
         require_remediation_routing_node,
         {"planner_agent": "planner_agent", "end": END},
     )
-    graph.add_edge("planner_agent", "human_approval_node")
+    graph.add_conditional_edges(
+        "planner_agent",
+        planning_outcome_routing,
+        {"missing_info_node": "missing_info_node", "human_approval_node": "human_approval_node", "end": END},
+    )
+    graph.add_edge("missing_info_node", "planner_agent")
     graph.add_conditional_edges(
         "human_approval_node",
         approval_routing,

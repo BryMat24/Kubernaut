@@ -5,6 +5,8 @@ from langgraph.types import interrupt
 from agents import DiagnosisAgent, PlannerAgent, RemediationAgent
 from graph.state import OrchestratorState
 
+MAX_MISSING_INFO_ROUNDS = 2
+
 
 def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
     async def diagnose_node(state: OrchestratorState) -> dict:
@@ -37,6 +39,30 @@ def require_remediation_routing_node(state: OrchestratorState) -> Literal["plann
     return "planner_agent"
 
 
+def planning_outcome_routing(state: OrchestratorState) -> Literal["missing_info_node", "human_approval_node", "end"]:
+    plan = state["plan"]
+    if plan.missing_information and state.get("missing_info_rounds", 0) < MAX_MISSING_INFO_ROUNDS:
+        return "missing_info_node"
+    if not plan.planning_success:
+        return "end"
+    return "human_approval_node"
+
+
+def missing_info_node(state: OrchestratorState) -> dict:
+    plan = state["plan"]
+    rounds = state.get("missing_info_rounds", 0) + 1
+    answer_payload = interrupt({
+        "type": "missing_information",
+        "question": plan.missing_information,
+        "diagnosis": state["diagnosis_result"],
+        "plan": plan,
+    })
+    return {
+        "human_provided_info": answer_payload.get("answer", ""),
+        "missing_info_rounds": rounds,
+    }
+
+
 def make_planner_node(planner_agent: PlannerAgent):
     async def planner_node(state: OrchestratorState) -> dict:
         writer = get_stream_writer()
@@ -44,6 +70,7 @@ def make_planner_node(planner_agent: PlannerAgent):
         result = await planner_agent.ainvoke({
             "messages": [],
             "diagnosis_result": state["diagnosis_result"],
+            "human_provided_info": state.get("human_provided_info", ""),
             "iteration_count": 0,
             "repo_url": state["repo_url"],
             "bare_path": "",
@@ -51,7 +78,10 @@ def make_planner_node(planner_agent: PlannerAgent):
             "branch": "",
         })
         plan = result["plan"]
-        completed_message = plan.summary if plan.planning_success else "Could not produce a safe plan."
+        if plan.missing_information:
+            completed_message = f"Need more information: {plan.missing_information}"
+        else:
+            completed_message = plan.summary
         writer({"phase": "planner", "status": "completed", "message": completed_message})
         return {"plan": plan}
 
@@ -60,6 +90,7 @@ def make_planner_node(planner_agent: PlannerAgent):
 
 def human_approval_node(state: OrchestratorState) -> dict:
     decision = interrupt({
+        "type": "approval",
         "diagnosis": state["diagnosis_result"],
         "plan": state["plan"],
     })

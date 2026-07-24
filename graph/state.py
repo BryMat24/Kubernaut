@@ -12,6 +12,8 @@ class OrchestratorState(TypedDict):
     pr_url: str
     eval_passed: bool
     eval_reasoning: str
+    human_provided_info: str
+    missing_info_rounds: int
 
 class DiagnosisAgentState(MessagesState):
     query: str
