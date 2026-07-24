@@ -585,69 +585,6 @@ def get_events(
     return events
 
 
-# LOGS
-@mcp.tool
-def get_pod_logs(
-    pod: Annotated[str, "Pod name."],
-    namespace: Annotated[str, "Namespace containing the Pod."] = "default",
-    container: Annotated[str | None, "Container name, for multi-container Pods."] = None,
-    tail: Annotated[int, "Number of recent log lines to retrieve."] = 100,
-) -> str:
-    """
-    Retrieve logs from a running container.
-
-    Example: kubectl logs my-pod -n default --tail=100
-
-    Use when: the container is currently running (or was last terminated normally) and you
-    need to see recent application output or errors. If the container has restarted and you
-    suspect a crash, use get_previous_logs instead — this only shows the current instance.
-    """
-    cmd = ["kubectl", "logs", pod, "-n", namespace, f"--tail={tail}"]
-
-    if container:
-        cmd.extend(["-c", container])
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    return result.stdout
-
-
-@mcp.tool
-def get_previous_logs(
-    pod: Annotated[str, "Pod name."],
-    namespace: Annotated[str, "Namespace containing the Pod."] = "default",
-    container: Annotated[str | None, "Container name, for multi-container Pods."] = None,
-    tail: Annotated[int, "Number of recent log lines to retrieve."] = 100,
-) -> str:
-    """
-    Retrieve logs from the previous instance of a restarted container.
-
-    Example: kubectl logs my-pod -n default --previous --tail=100
-
-    Use when: diagnosing CrashLoopBackOff or any restart — the current container's logs
-    (get_pod_logs) would only show the new instance since restart, missing the actual crash
-    reason, which only exists in the previous instance's logs.
-    """
-    cmd = ["kubectl", "logs", pod, "-n", namespace, "--previous", f"--tail={tail}"]
-
-    if container:
-        cmd.extend(["-c", container])
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    return result.stdout
-
-
 # METRICS
 @mcp.tool
 def top_pods(

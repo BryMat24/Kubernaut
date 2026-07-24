@@ -25,15 +25,74 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 SCOPE_PROMPT = """
-You are an SRE scoping a Kubernetes incident. Gather ONLY enough high-level signal to
-understand the scene: which namespace/workload is involved, pod phases, notable recent events,
-and overall health. Stay broad and shallow — do NOT deep-dive a single hypothesis yet.
+You are an experienced Site Reliability Engineer (SRE) performing the SCOPING phase of a
+Kubernetes incident investigation.
 
-You may make at most a few discovery calls. When you have enough to describe the scene, STOP
-calling tools and reply with a concise scene summary (2-5 sentences): the affected workload,
-observed symptoms, and the most notable signals. That summary is your only output.
+Your goal is NOT to diagnose the root cause.
+Your goal is ONLY to build situational awareness before hypothesis generation.
 
-user query:
+Collect enough information to answer these questions:
+
+1. Which namespace and workload are affected?
+
+2. What resources appear unhealthy?
+   - Deployment
+   - StatefulSet
+   - Pod
+   - Service
+
+3. What is the current workload health?
+   - Ready replicas
+   - Pod phases
+   - Restart counts
+   - Failed rollouts
+   - Service endpoint availability
+
+4. Are there any notable recent Kubernetes events?
+
+5. If the user's symptoms indicate an application issue (for example high latency,
+5xx errors, crashes, or performance degradation), collect related lightweight
+application signals from Prometheus and Loki, such as:
+   - Error rate
+   - Request latency (P95)
+   - CPU saturation
+   - OOMKilled indicator
+   - Error logs from Loki
+
+6. Classify the incident into one or more broad symptom domains:
+   - Application failures
+   - Resource pressure
+   - Scheduling
+   - Networking
+   - Configuration
+   - Storage
+   - Unknown
+
+Rules
+
+- Stay broad.
+- Do NOT diagnose the root cause.
+- Do NOT investigate a specific hypothesis.
+- Prefer Kubernetes discovery first.
+- Use Prometheus only when it provides a quick high-level health signal.
+- Use Loki only when Kubernetes state and metrics are insufficient.
+- Never deep-dive logs or stack traces.
+- Do NOT repeatedly inspect the same resource.
+- Stop as soon as you have enough information for another engineer to begin a
+  focused investigation.
+
+When finished, return ONLY a concise scene summary (3–6 sentences) containing:
+
+- affected namespace/workload
+- observed symptoms
+- overall workload health
+- notable Kubernetes, Prometheus, and/or Loki signals
+- likely investigation domains
+
+Do NOT suggest a root cause.
+Do NOT recommend a fix.
+
+User query:
 {query}
 """
 
@@ -65,29 +124,28 @@ class DiagnosisAgent:
     def __init__(
         self,
         llm: BaseChatModel,
-        tools: list[BaseTool],
-        classifier_llm: BaseChatModel | None = None,
-        compactor_llm: BaseChatModel | None = None,
+        investigate_tools: list[BaseTool],
+        scope_tools: list[BaseTool],
+        utility_llm: BaseChatModel | None = None,
     ) -> None:
-        self.tools = tools
         self.logger = logging.getLogger("diagnosisAgent")
-        self.MAX_SCOPE_CALLS = 3
+        self.MAX_SCOPE_CALLS = 8
         self.MAX_INVESTIGATE_ITERATIONS = 8
         self.MAX_HYPOTHESES = 3
 
-        cheap = classifier_llm or llm
-        self.llm = llm.bind_tools(tools)            # main model, used only in investigate
-        self.scope_llm = cheap.bind_tools(tools)    # cheap model, used only in scope
+        self.scope_tool_executor = ToolNode(scope_tools)
+        self.tool_executor = ToolNode(investigate_tools)
+
+        self.llm = llm.bind_tools(investigate_tools)            # main model, used only in investigate
+        self.scope_llm = utility_llm.bind_tools(scope_tools)    # cheap model, used only in scope
         self.playbooks = PlaybookLibrary()
-        self.hypothesizer = Hypothesizer(cheap)
-        self.evaluator = DiagnosisEvaluator(cheap)
-        self.classifier = Classifier(cheap)
-        self.history_compactor = HistoryCompactor(compactor_llm or llm)
+        self.hypothesizer = Hypothesizer(utility_llm)
+        self.evaluator = DiagnosisEvaluator(utility_llm)
+        self.classifier = Classifier(utility_llm)
+        self.history_compactor = HistoryCompactor(utility_llm)
         self.graph = self._build_graph()
 
     def _build_graph(self) -> CompiledStateGraph:
-        self._tool_executor = ToolNode(self.tools)
-
         graph = StateGraph(state_schema=DiagnosisAgentState)
         graph.add_node("scope_node", self._scope_node)
         graph.add_node("hypothesize_node", self._hypothesize_node)
@@ -125,7 +183,7 @@ class DiagnosisAgent:
                 break
             for call in response.tool_calls:
                 self.logger.info(f"  scope -> {call['name']}({call['args']})")
-            tool_result = await self._tool_executor.ainvoke({"messages": messages})
+            tool_result = await self.scope_tool_executor.ainvoke({"messages": messages})
             messages.extend(tool_result["messages"])
         else:
             # budget hit while still calling tools — summarize what we have

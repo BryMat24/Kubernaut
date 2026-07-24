@@ -8,6 +8,7 @@ Usage: python3 test_diagnosis_agent.py
 
 import asyncio
 import logging
+from IPython.display import Image, display
 
 from graph.builder import init_diagnosis_agent
 
@@ -25,6 +26,7 @@ HARDCODED_STATE = {
 async def main() -> None:
     query = HARDCODED_STATE["query"]
 
+    await init_diagnosis_agent()
     diagnosis_agent = await init_diagnosis_agent()
 
     result = await diagnosis_agent.ainvoke({

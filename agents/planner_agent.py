@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 class PlannerAgent:
-    def __init__(self, llm: BaseChatModel, tools: list[BaseTool]) -> None:
+    def __init__(self, llm: BaseChatModel, tools: list[BaseTool], utility_llm: BaseChatModel) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
         self.logger = logging.getLogger("planner_agent")
@@ -73,7 +73,7 @@ class PlannerAgent:
             cannot), stop calling tools — a separate step turns your findings into the final
             structured plan.
         """
-        self.classifier = PlanClassifier(llm)
+        self.classifier = PlanClassifier(utility_llm)
         self.graph = self._build_graph()
 
     def _build_graph(self) -> CompiledStateGraph:
