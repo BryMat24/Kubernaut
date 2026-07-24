@@ -29,7 +29,7 @@ def test_intent_routing_goes_to_explain_when_explain_detected():
 def test_intent_routing_defaults_to_scope_when_not_explain():
     agent = _agent()
     for intent in ("diagnose", "", None):
-        assert agent._intent_routing({"detected_intent": intent}) == "scope_node"
+        assert agent._intent_routing({"detected_intent": intent}) == "_context_builder"
 
 
 def test_investigate_routing_goes_to_tool_when_calls_and_budget_left():
@@ -154,8 +154,8 @@ def test_explain_node_answers_directly_when_no_tool_calls_needed():
     final_answer = _ai([])
     final_answer.content = "An HPA scales replicas based on observed metrics."
 
-    agent.scope_llm = MagicMock()
-    agent.scope_llm.ainvoke = AsyncMock(return_value=final_answer)
+    agent.llm = MagicMock()
+    agent.llm.ainvoke = AsyncMock(return_value=final_answer)
     agent.scope_tool_executor = MagicMock()
     agent.scope_tool_executor.ainvoke = AsyncMock()
 
@@ -175,8 +175,8 @@ def test_explain_node_calls_tools_then_answers():
     final_answer.content = "The HPA sample-app-hpa targets 70% CPU utilization."
     tool_result_msg = MagicMock(name="tool_result")
 
-    agent.scope_llm = MagicMock()
-    agent.scope_llm.ainvoke = AsyncMock(side_effect=[tool_call_msg, final_answer])
+    agent.llm = MagicMock()
+    agent.llm.ainvoke = AsyncMock(side_effect=[tool_call_msg, final_answer])
     agent.scope_tool_executor = MagicMock()
     agent.scope_tool_executor.ainvoke = AsyncMock(return_value={"messages": [tool_result_msg]})
 
@@ -196,15 +196,15 @@ def test_explain_node_forces_final_answer_when_budget_exhausted():
     forced_final.content = "Based on what I found so far: ..."
     tool_result_msg = MagicMock(name="tool_result")
 
-    agent.scope_llm = MagicMock()
+    agent.llm = MagicMock()
     # ainvoke is called MAX_EXPLAIN_ITERATIONS times inside the loop (always requesting a tool
     # call), then once more after the loop to force a final answer with no tool calls.
-    agent.scope_llm.ainvoke = AsyncMock(side_effect=[always_calls_tools, always_calls_tools, forced_final])
+    agent.llm.ainvoke = AsyncMock(side_effect=[always_calls_tools, always_calls_tools, forced_final])
     agent.scope_tool_executor = MagicMock()
     agent.scope_tool_executor.ainvoke = AsyncMock(return_value={"messages": [tool_result_msg]})
 
     result = asyncio.run(agent._explain_node({"query": "q"}))
 
     assert result["messages"][-1] is forced_final
-    assert agent.scope_llm.ainvoke.call_count == 3
+    assert agent.llm.ainvoke.call_count == 3
     assert agent.scope_tool_executor.ainvoke.call_count == 2

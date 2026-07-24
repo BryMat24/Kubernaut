@@ -58,7 +58,7 @@ class DiagnosisAgent:
     def _build_graph(self) -> CompiledStateGraph:
         graph = StateGraph(state_schema=DiagnosisAgentState)
         graph.add_node("intent_node", self._intent_node)
-        graph.add_node("scope_node", self._context_builder)
+        graph.add_node("_context_builder", self._context_builder)
         graph.add_node("explain_node", self._explain_node)
         graph.add_node("hypothesize_node", self._hypothesize_node)
         graph.add_node("investigate_node", self._investigate_node)
@@ -70,9 +70,9 @@ class DiagnosisAgent:
         graph.add_conditional_edges(
             "intent_node",
             self._intent_routing,
-            {"scope_node": "scope_node", "explain_node": "explain_node"},
+            {"_context_builder": "_context_builder", "explain_node": "explain_node"},
         )
-        graph.add_edge("scope_node", "hypothesize_node")
+        graph.add_edge("_context_builder", "hypothesize_node")
         graph.add_edge("explain_node", "finalize_node")
         graph.add_edge("hypothesize_node", "investigate_node")
         graph.add_conditional_edges(
@@ -90,40 +90,32 @@ class DiagnosisAgent:
         return graph.compile()
 
     async def _intent_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== intent ===")
         classification = await self.intent_classifier.classify(state["query"])
-        self.logger.info(f"  intent={classification.intent} ({self._preview(classification.reasoning)})")
         return {"detected_intent": classification.intent}
 
-    def _intent_routing(self, state: DiagnosisAgentState) -> Literal["scope_node", "explain_node"]:
+    def _intent_routing(self, state: DiagnosisAgentState) -> Literal["_context_builder", "explain_node"]:
         if state.get("detected_intent") == "explain":
             return "explain_node"
-        return "scope_node"
+        return "_context_builder"
 
     async def _explain_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== explain ===")
         system_message = SystemMessage(content=EXPLAIN_PROMPT.format(query=state["query"]))
         turn: list[Any] = []
         for _ in range(self.MAX_EXPLAIN_ITERATIONS):
-            response = await self.scope_llm.ainvoke([system_message, *turn])
+            response = await self.llm.ainvoke([system_message, *turn])
             turn.append(response)
             if not response.tool_calls:
-                self.logger.info(f"  explanation: {self._preview(response.content)}")
                 return {"messages": turn}
-            for call in response.tool_calls:
-                self.logger.info(f"  explain -> {call['name']}({call['args']})")
+
             tool_result = await self.scope_tool_executor.ainvoke({"messages": [system_message, *turn]})
             turn.extend(tool_result["messages"])
-        # budget hit while still calling tools — force a final answer, no more tool calls
-        final = await self.scope_llm.ainvoke(
-            [system_message, *turn, SystemMessage(content="Stop. Answer the user's question now, no tool calls.")]
+        final = await self.llm.ainvoke(
+            [system_message, *turn, SystemMessage(content="Stop. Answer the user's question now, no tool calls. If no evidence is found, don't hallucinate")]
         )
         turn.append(final)
-        self.logger.info(f"  explanation: {self._preview(final.content)}")
         return {"messages": turn}
 
     async def _context_builder(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== scope ===")
         messages: list[Any] = [SystemMessage(content=SCOPE_PROMPT.format(query=state["query"]))]
         summary = ""
         for _ in range(self.MAX_SCOPE_CALLS):
