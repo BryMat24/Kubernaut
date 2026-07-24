@@ -4,3 +4,4 @@ from .eval_result import EvalResult
 from .remediation_plan import RemediationPlan, RemediationStep
 from .hypothesis import HypothesisSelection
 from .evaluation import EvaluationVerdict
+from .intent import IntentClassification

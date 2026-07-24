@@ -13,6 +13,7 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
         result = await diagnosis_agent.ainvoke({
             "messages": [],
             "query": state["query"],
+            "detected_intent": "",
             "scope_summary": "",
             "current_hypothesis": "",
             "selected_playbook_id": "",

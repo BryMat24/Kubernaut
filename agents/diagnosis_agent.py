@@ -15,11 +15,12 @@ from .helpers import (
     DiagnosisEvaluator,
     HistoryCompactor,
     Hypothesizer,
+    IntentClassifier,
     PlaybookLibrary,
     find_repeated_calls,
 )
 from graph.state import DiagnosisAgentState
-from .prompts import SCOPE_PROMPT, INVESTIGATE_PROMPT
+from .prompts import SCOPE_PROMPT, INVESTIGATE_PROMPT, EXPLAIN_PROMPT
 
 load_dotenv()
 
@@ -44,7 +45,9 @@ class DiagnosisAgent:
 
         self.llm = llm.bind_tools(investigate_tools)            # main model, used only in investigate
         self.scope_llm = utility_llm.bind_tools(scope_tools)    # cheap model, used only in scope
+        self.utility_llm = utility_llm                          # cheap model, used bare for explain
         self.playbooks = PlaybookLibrary()
+        self.intent_classifier = IntentClassifier(utility_llm)
         self.hypothesizer = Hypothesizer(utility_llm)
         self.evaluator = DiagnosisEvaluator(utility_llm)
         self.classifier = Classifier(utility_llm)
@@ -53,15 +56,23 @@ class DiagnosisAgent:
 
     def _build_graph(self) -> CompiledStateGraph:
         graph = StateGraph(state_schema=DiagnosisAgentState)
-        graph.add_node("scope_node", self._scope_node)
+        graph.add_node("intent_node", self._intent_node)
+        graph.add_node("scope_node", self._context_builder)
+        graph.add_node("explain_node", self._explain_node)
         graph.add_node("hypothesize_node", self._hypothesize_node)
         graph.add_node("investigate_node", self._investigate_node)
         graph.add_node("tool_node", self._tool_node)
         graph.add_node("evaluate_node", self._evaluate_node)
         graph.add_node("finalize_node", self._finalize_node)
 
-        graph.add_edge(START, "scope_node")
+        graph.add_edge(START, "intent_node")
+        graph.add_conditional_edges(
+            "intent_node",
+            self._intent_routing,
+            {"scope_node": "scope_node", "explain_node": "explain_node"},
+        )
         graph.add_edge("scope_node", "hypothesize_node")
+        graph.add_edge("explain_node", "finalize_node")
         graph.add_edge("hypothesize_node", "investigate_node")
         graph.add_conditional_edges(
             "investigate_node",
@@ -77,7 +88,25 @@ class DiagnosisAgent:
         graph.add_edge("finalize_node", END)
         return graph.compile()
 
-    async def _scope_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+    async def _intent_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+        self.logger.info("\n=== intent ===")
+        classification = await self.intent_classifier.classify(state["query"])
+        self.logger.info(f"  intent={classification.intent} ({self._preview(classification.reasoning)})")
+        return {"detected_intent": classification.intent}
+
+    def _intent_routing(self, state: DiagnosisAgentState) -> Literal["scope_node", "explain_node"]:
+        if state.get("detected_intent") == "explain":
+            return "explain_node"
+        return "scope_node"
+
+    async def _explain_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
+        self.logger.info("\n=== explain ===")
+        system_prompt = EXPLAIN_PROMPT.format(query=state["query"])
+        response = await self.utility_llm.ainvoke([SystemMessage(content=system_prompt)])
+        self.logger.info(f"  explanation: {self._preview(response.content)}")
+        return {"messages": [response]}
+
+    async def _context_builder(self, state: DiagnosisAgentState) -> dict[str, Any]:
         self.logger.info("\n=== scope ===")
         messages: list[Any] = [SystemMessage(content=SCOPE_PROMPT.format(query=state["query"]))]
         summary = ""

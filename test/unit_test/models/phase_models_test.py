@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from models import HypothesisSelection, EvaluationVerdict
+from models import HypothesisSelection, EvaluationVerdict, IntentClassification
 
 
 def test_hypothesis_selection_roundtrip():
@@ -24,3 +24,13 @@ def test_evaluation_verdict_optional_fields_default_none():
     assert e.requires_remediation is None
     assert e.next_hypothesis is None
     assert e.why_ruled_out is None
+
+
+def test_intent_classification_accepts_valid_intents():
+    for intent in ("diagnose", "explain"):
+        assert IntentClassification(intent=intent, reasoning="x").intent == intent
+
+
+def test_intent_classification_rejects_unknown_intent():
+    with pytest.raises(ValidationError):
+        IntentClassification(intent="fix", reasoning="x")

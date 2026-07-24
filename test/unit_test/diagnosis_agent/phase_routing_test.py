@@ -19,6 +19,18 @@ def _ai(tool_calls):
     return m
 
 
+def test_intent_routing_goes_to_explain_when_explain_detected():
+    agent = _agent()
+    state = {"detected_intent": "explain"}
+    assert agent._intent_routing(state) == "explain_node"
+
+
+def test_intent_routing_defaults_to_scope_when_not_explain():
+    agent = _agent()
+    for intent in ("diagnose", "", None):
+        assert agent._intent_routing({"detected_intent": intent}) == "scope_node"
+
+
 def test_investigate_routing_goes_to_tool_when_calls_and_budget_left():
     agent = _agent()
     state = {"messages": [_ai([{"id": "1"}])], "investigate_iterations": 2}

@@ -16,6 +16,7 @@ class OrchestratorState(TypedDict):
 class DiagnosisAgentState(MessagesState):
     query: str
     diagnosis_result: DiagnosisResult
+    detected_intent: str
     # SRE phase machinery
     scope_summary: str
     current_hypothesis: str
