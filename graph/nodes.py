@@ -13,7 +13,14 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
         result = await diagnosis_agent.ainvoke({
             "messages": [],
             "query": state["query"],
-            "iteration_count": 0,
+            "scope_summary": "",
+            "current_hypothesis": "",
+            "selected_playbook_id": "",
+            "ruled_out": [],
+            "hypothesis_count": 0,
+            "investigate_iterations": 0,
+            "last_verdict": "",
+            "requires_remediation_hint": None,
         })
         diagnosis_result = result["diagnosis_result"]
         writer({"phase": "diagnosis", "status": "completed", "message": diagnosis_result.summary})

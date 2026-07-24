@@ -15,8 +15,16 @@ class OrchestratorState(TypedDict):
 
 class DiagnosisAgentState(MessagesState):
     query: str
-    iteration_count: int
     diagnosis_result: DiagnosisResult
+    # SRE phase machinery
+    scope_summary: str
+    current_hypothesis: str
+    selected_playbook_id: str
+    ruled_out: list[dict]
+    hypothesis_count: int
+    investigate_iterations: int
+    last_verdict: str
+    requires_remediation_hint: bool | None
 
 class PlannerAgentState(MessagesState):
     diagnosis_result: DiagnosisResult  # provided by caller
