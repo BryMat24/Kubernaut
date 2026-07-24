@@ -4,25 +4,76 @@ category: fallback
 trigger_conditions: []
 ---
 
-# Generic Investigation
+# Generic Investigation (Pod Lifecycle / Fallback)
 
-Use this when no specialized playbook matches the scope signals.
+Use this when no specialized playbook matches the scope signals — this covers Pod Lifecycle
+startup/crash failures (CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerError)
+plus anything else with no dedicated playbook.
 
 ## Checklist
-1. If a specific resource/workload is named, `describe_resource` it first; otherwise
-   `list_resources` in the namespace to identify the affected workload.
-2. For a failing or not-ready workload, `describe_resource` the Pod, then `get_events` in the
-   namespace for the failure reason.
-3. If the container is running, `get_pod_logs`; if it has restarted, `get_previous_logs`.
-4. Treat an explicit failure string in events or logs — "Forbidden", "OOMKilled",
-   "CrashLoopBackOff", "ImagePullBackOff", "Evicted", "FailedScheduling",
-   "FailedGetResourceMetric", "CreateContainerConfigError" — as sufficient evidence of the
-   mechanism. Stop confirming it further and conclude.
+
+### 1. Identify the affected workload
+
+tool: describe_resource params: {kind: POD, name, namespace} conclusive: false
+(if no specific pod is named: list_resources params: {kind: POD, namespace} first)
+
+Check: phase, containerStatuses[].state (current) and lastState (most recent previous
+termination — exitCode/reason), restartCount.
+
+### 2. Check recent events
+
+tool: get_events params: {namespace} conclusive: false
+note: read the event `reason` field verbatim — it names which branch you're in
+(CrashLoopBackOff / ImagePullBackOff / ErrImagePull / Failed / BackOff).
+
+### 3a. Branch: CrashLoopBackOff
+
+tool: error_logs (or recent_logs if the failure is outside error_logs's window)
+params: {app_label, namespace} conclusive: true
+
+conclusion_criteria:
+
+- lastState.terminated.exitCode == 137, or an OOMKilled event/log line → this is
+  resource_governance's OOMKilled mechanism, not a generic crash. Say so and stop — do not
+  re-diagnose it here.
+- logs show an unhandled exception/stack trace → application-level crash. Name the exception.
+- logs are clean but events show a failed liveness/readiness probe → probe misconfiguration,
+  not an app crash. Name the probe field likely at fault.
+- no useful logs are returned and restartCount is climbing with no app output at all → go to 3b.
+
+### 3b. Branch: CreateContainerError (container never starts)
+
+tool: recent_logs params: {app_label, namespace} conclusive: false
+note: if this also returns nothing, the container never ran long enough to log anything —
+that absence is itself evidence, not a dead end.
+
+tool: describe_resource params: {kind: POD, name, namespace} conclusive: true
+conclusion_criteria: waiting.reason is CreateContainerError, or an event names a bad
+command/entrypoint, missing mount, or permission denied.
+
+### 3c. Branch: ImagePullBackOff / ErrImagePull
+
+tool: get_events params: {namespace} conclusive: true
+conclusion_criteria (read the message verbatim):
+
+- "manifest unknown" / "not found" → wrong image name or tag.
+- "unauthorized" / "authentication required" → missing or incorrect imagePullSecret.
+- "connection refused" / "timeout" / "no such host" → registry unreachable.
+
+tool: describe_resource params: {kind: POD, name, namespace} conclusive: false
+note: confirm the exact image:tag requested and whether imagePullSecrets is set.
 
 ## Conclusion
-Name the concrete mechanism and the specific resource that causes it. If evidence is
-insufficient, say exactly what is missing rather than guessing.
+
+Name exactly one mechanism: application exception (name it) · failing liveness/readiness probe
+(name the config) · CreateContainerError (name the failure) · ImagePullBackOff/ErrImagePull
+(bad tag / missing imagePullSecret / unreachable registry — name which). If evidence points to
+OOMKilled or CreateContainerConfigError, say so and defer — resource_governance and
+secret_configmap own those mechanisms, do not re-derive them here.
 
 ## Do not conclude
-- Do not assert a cause behind a missing/misreferenced resource you cannot see the source of.
-- Do not blame infrastructure (metrics-server, node capacity) when a workload-level cause fits.
+
+- OOMKilled without exitCode 137 or an explicit OOMKilled event/log line.
+- A missing Secret/ConfigMap key (that's CreateContainerConfigError — secret_configmap territory).
+- A ResourceQuota block (the pod would never have been created at all).
+- Runtime CPU/memory throttling on an otherwise-Running pod (resource_governance's territory).

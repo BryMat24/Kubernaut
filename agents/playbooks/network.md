@@ -164,6 +164,53 @@ Look for:
 
 ---
 
+### 10. Check DNS resolution
+
+tool: list_resources
+params: {kind: service, namespace}
+conclusive: false
+
+Check:
+
+- does a Service with the exact hostname/name the client is trying to reach actually exist in
+  this namespace (or the referenced namespace, if the client uses a fully-qualified name)?
+
+tool: get_events
+params: {namespace}
+conclusive: false
+
+Check:
+
+- CoreDNS pods in kube-system Running and Ready (list_resources params: {kind: pod, namespace:
+  kube-system, label_selector: k8s-app=kube-dns})
+
+Possible findings:
+
+- the target Service name does not exist at all -- DNS has nothing to resolve
+- the client is using the wrong namespace suffix (cross-namespace DNS needs
+  <service>.<namespace>.svc.cluster.local)
+- CoreDNS itself is unhealthy (Pods not Ready) -- rare, check this last
+
+---
+
+### 11. Check LoadBalancer status (only if Service type is LoadBalancer)
+
+tool: get_resource
+params: {kind: service, name, namespace}
+conclusive: true
+
+Check:
+
+- status.loadBalancer.ingress is empty/absent
+- no cloud-controller-manager or LoadBalancer implementation exists in this cluster
+
+Possible findings:
+
+- the Service is otherwise correctly configured (selector matches, endpoints ready) but stuck
+  Pending because nothing in this cluster can provision an external IP
+
+---
+
 ## Conclusion
 
 A network/connectivity root cause is supported when the evidence identifies one of the following:
