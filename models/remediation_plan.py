@@ -20,3 +20,14 @@ class RemediationPlan(BaseModel):
         "produced. False if the relevant files couldn't be found or the investigation was "
         "inconclusive — this signals the plan isn't safe to hand to the remediation agent."
     )
+    missing_information: str | None = Field(
+        default=None,
+        description=(
+            "Set ONLY when the plan is otherwise fully investigated and correct except for one "
+            "concrete value that cannot be determined from repository evidence (e.g. a valid "
+            "image tag, an external IP, a secret's real value) -- state the exact question to "
+            "ask a human, e.g. 'What image tag should be used for brymat24/test-cache-app?'. "
+            "When set, planning_success must be False and steps must be empty -- this is not an "
+            "executable plan yet."
+        ),
+    )

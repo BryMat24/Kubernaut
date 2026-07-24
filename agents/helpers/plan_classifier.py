@@ -19,7 +19,7 @@ class PlanClassifier:
             Respond with structured output:
             - summary: plain-language explanation of the overall fix.
             - steps: ordered list of step_number, file_path, description, new_content —
-            one entry per file change.
+            one entry per file change. Leave this EMPTY if missing_information is set below.
                 - new_content is ONLY the changed/inserted lines themselves, not the whole
                 file but include surrounding related block. Copy any lines you keep
                 unchanged verbatim from what you actually read — do not paraphrase or
@@ -32,8 +32,17 @@ class PlanClassifier:
                 - For a brand-new file, set file_path to the new path and description to
                 state clearly that this is a new file.
             - planning_success: true if you found the relevant file(s) and produced a
-            concrete, evidence-backed plan; false if you could not find them or are not
-            confident in the plan.
+            concrete, evidence-backed plan; false if you could not find them, are not
+            confident in the plan, or missing_information is set below.
+            - missing_information: leave null in the common case. Set it ONLY when you found
+            the exact file and fix mechanism, but the fix needs one concrete value that is
+            fundamentally impossible to determine from this repository — not just "no
+            established convention" (which still gets a best-effort value noted in
+            description as today), but genuinely unknowable, like which valid image tag
+            exists in a registry you cannot query, or a secret's real external value. When
+            you set this, state the exact question to ask a human (e.g. "What image tag
+            should be used for brymat24/test-cache-app?"), leave steps empty, and set
+            planning_success to false.
 
             Every proposed value must be grounded in evidence you actually read in this
             repo (e.g. a sibling container's existing resource limits) wherever such

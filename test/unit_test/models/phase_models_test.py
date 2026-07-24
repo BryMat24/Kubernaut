@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from models import HypothesisSelection, EvaluationVerdict, IntentClassification
+from models import HypothesisSelection, EvaluationVerdict, IntentClassification, RemediationPlan
 
 
 def test_hypothesis_selection_roundtrip():
@@ -34,3 +34,18 @@ def test_intent_classification_accepts_valid_intents():
 def test_intent_classification_rejects_unknown_intent():
     with pytest.raises(ValidationError):
         IntentClassification(intent="fix", reasoning="x")
+
+
+def test_remediation_plan_missing_information_defaults_to_none():
+    plan = RemediationPlan(summary="s", steps=[], planning_success=False)
+    assert plan.missing_information is None
+
+
+def test_remediation_plan_accepts_missing_information():
+    plan = RemediationPlan(
+        summary="Found the exact file and fix, but the correct value isn't known",
+        steps=[],
+        planning_success=False,
+        missing_information="What image tag should be used for brymat24/test-cache-app?",
+    )
+    assert plan.missing_information == "What image tag should be used for brymat24/test-cache-app?"
