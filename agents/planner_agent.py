@@ -17,17 +17,13 @@ from .helpers import PlanClassifier
 from .prompts import PLANNER_SYSTEM_PROMPT
 from graph.state import PlannerAgentState
 from models import RemediationPlan
-import logging
 import uuid
-
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 class PlannerAgent:
     def __init__(self, llm: BaseChatModel, tools: list[BaseTool], utility_llm: BaseChatModel) -> None:
         self.llm = llm.bind_tools(tools)
         self.tools = tools
-        self.logger = logging.getLogger("planner_agent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = PLANNER_SYSTEM_PROMPT.format(tool_names=", ".join(t.name for t in tools))
         self.classifier = PlanClassifier(utility_llm)
@@ -56,32 +52,25 @@ class PlannerAgent:
         return graph.compile()
 
     def _setup_node(self, state: PlannerAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== setup ===")
         branch = f"plan/{slugify(state['diagnosis_result'].summary)}-{uuid.uuid4().hex[:6]}"
         with repo_lock(state["repo_url"]):
             bare_path = ensure_base_clone(state["repo_url"])
             repo_path = create_task_worktree(bare_path, branch)
-        self.logger.info(f"  repo: {bare_path}")
-        self.logger.info(f"  worktree: {repo_path} (branch {branch})")
         return {"bare_path": bare_path, "repo_path": repo_path, "branch": branch}
 
     def _cleanup_node(self, state: PlannerAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== cleanup ===")
         try:
             remove_task_worktree(state["bare_path"], state["repo_path"])
-            self.logger.info(f"  removed worktree: {state['repo_path']}")
-        except Exception as e:
-            self.logger.info(f"  failed to remove worktree: {e}")
+        except Exception:
+            pass
         try:
             run(["git", "branch", "-D", state["branch"]], state["bare_path"])
-            self.logger.info(f"  deleted branch: {state['branch']}")
-        except Exception as e:
-            self.logger.info(f"  failed to delete branch: {e}")
+        except Exception:
+            pass
         return {}
 
     def _reasoning_node(self, state: PlannerAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
-        self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
         diagnosis_result = state["diagnosis_result"]
         root_cause_line = f"\nroot_cause: {diagnosis_result.root_cause}" if diagnosis_result.root_cause else ""
@@ -92,24 +81,16 @@ class PlannerAgent:
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
 
-        if response.tool_calls:
-            for call in response.tool_calls:
-                self.logger.info(f"  agent -> {call['name']}({call['args']})")
-
         return {
             "messages": [response],
             "iteration_count": iteration,
         }
 
     def _tool_node(self, state: PlannerAgentState) -> dict[str, Any]:
-        result = self._tool_executor.invoke(state)
-        for msg in result["messages"]:
-            self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
-        return result
+        return self._tool_executor.invoke(state)
 
     def _tool_routing(self, state: PlannerAgentState) -> Literal["tool_node", "finalize_node"]:
         if state.get("iteration_count", 0) >= self.MAX_ITERATIONS:
-            self.logger.info(f"  hit MAX_ITERATIONS ({self.MAX_ITERATIONS}), stopping")
             return "finalize_node"
 
         last_message = state["messages"][-1]
@@ -118,16 +99,11 @@ class PlannerAgent:
         return "finalize_node"
 
     async def _finalize_node(self, state: PlannerAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== finalize ===")
         hit_max_iterations = state.get("iteration_count", 0) >= self.MAX_ITERATIONS
         last_message = state["messages"][-1]
         incomplete = hit_max_iterations and bool(getattr(last_message, "tool_calls", None))
 
         if incomplete:
-            self.logger.warning(
-                f"  MAX_ITERATIONS ({self.MAX_ITERATIONS}) hit mid-investigation "
-                f"— forcing a failed plan instead of trusting partial results"
-            )
             diagnosis_result = state["diagnosis_result"]
             root_cause_line = (
                 f"\n\nRoot cause: {diagnosis_result.root_cause}" if diagnosis_result.root_cause else ""
@@ -144,13 +120,7 @@ class PlannerAgent:
             return {"plan": parsed}
 
         parsed = await self.classifier.classify(state["diagnosis_result"], state["messages"])
-        self.logger.info(f"  planning_success={parsed.planning_success} steps={len(parsed.steps)} summary={self._preview(parsed.summary)}")
         return {"plan": parsed}
-
-    @staticmethod
-    def _preview(text: Any, limit: int = 300) -> str:
-        text = str(text)
-        return text if len(text) <= limit else text[:limit] + "... [truncated]"
 
     def invoke(self, state: PlannerAgentState):
         return self.graph.invoke(state)

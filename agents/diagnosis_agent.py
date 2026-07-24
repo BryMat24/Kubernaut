@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Literal
 
 from dotenv import load_dotenv
@@ -24,8 +23,6 @@ from .prompts import SCOPE_PROMPT, INVESTIGATE_PROMPT, EXPLAIN_PROMPT
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-
 
 class DiagnosisAgent:
     def __init__(
@@ -35,7 +32,6 @@ class DiagnosisAgent:
         scope_tools: list[BaseTool],
         utility_llm: BaseChatModel | None = None,
     ) -> None:
-        self.logger = logging.getLogger("diagnosisAgent")
         self.MAX_SCOPE_CALLS = 8
         self.MAX_EXPLAIN_ITERATIONS = 5
         self.MAX_INVESTIGATE_ITERATIONS = 8
@@ -166,9 +162,7 @@ class DiagnosisAgent:
         history, compaction_edits = self.history_compactor.compact(state["messages"])
         messages = [SystemMessage(content=system_prompt)] + history
         response = await self.llm.ainvoke(messages)
-        if response.tool_calls:
-            for call in response.tool_calls:
-                self.logger.info(f"  agent -> {call['name']}({call['args']})")
+
         return {"messages": [*compaction_edits, response], "investigate_iterations": iteration}
 
     async def _tool_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
@@ -201,8 +195,6 @@ class DiagnosisAgent:
 
         order = {call["id"]: i for i, call in enumerate(all_calls)}
         result = {"messages": sorted(fresh_messages + repeat_messages, key=lambda m: order[m.tool_call_id])}
-        for msg in result["messages"]:
-            self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
         return result
 
     def _investigate_routing(self, state: DiagnosisAgentState) -> Literal["tool_node", "evaluate_node"]:
@@ -213,7 +205,6 @@ class DiagnosisAgent:
         return "evaluate_node"
 
     async def _evaluate_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== evaluate ===")
         messages = state["messages"]
         last_message = messages[-1]
         pending_calls = getattr(last_message, "tool_calls", None) or []
@@ -225,10 +216,6 @@ class DiagnosisAgent:
             )
             for call in pending_calls
         ]
-        if stop_messages:
-            self.logger.info(
-                f"  budget exhausted with {len(stop_messages)} pending tool call(s) -- synthesizing stop responses"
-            )
         evaluation_messages = messages + stop_messages
 
         playbook = self.playbooks.get(state["selected_playbook_id"])
@@ -240,7 +227,6 @@ class DiagnosisAgent:
             state.get("hypothesis_count", 0),
             self.MAX_HYPOTHESES,
         )
-        self.logger.info(f"  verdict={verdict.verdict} ({self._preview(verdict.reasoning)})")
         update: dict[str, Any] = {
             "last_verdict": verdict.verdict,
             "requires_remediation_hint": verdict.requires_remediation,
@@ -262,11 +248,9 @@ class DiagnosisAgent:
         return "finalize_node"
 
     async def _finalize_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== finalize ===")
         if state.get("last_verdict") == "exhausted" or (
             state.get("last_verdict") == "reformulate" and state.get("hypothesis_count", 0) >= self.MAX_HYPOTHESES
         ):
-            self.logger.warning("  investigation exhausted — escalating (diagnosis_success=False)")
             return {
                 "diagnosis_result": DiagnosisResult(
                     summary=(
@@ -283,13 +267,7 @@ class DiagnosisAgent:
         hint = state.get("requires_remediation_hint")
         if hint is not None and parsed.diagnosis_success:
             parsed = parsed.model_copy(update={"requires_remediation": hint})
-        self.logger.info(f"  requires_remediation={parsed.requires_remediation} summary={self._preview(parsed.summary)}")
         return {"diagnosis_result": parsed}
-
-    @staticmethod
-    def _preview(text: Any, limit: int = 500) -> str:
-        text = str(text)
-        return text if len(text) <= limit else text[:limit] + "... [truncated]"
 
     def invoke(self, state: DiagnosisAgentState):
         return self.graph.invoke(state)

@@ -19,14 +19,11 @@ from .helpers import DiffEvaluator, HistoryCompactor
 from .prompts import REMEDIATION_SYSTEM_PROMPT
 from graph.state import RemediationAgentState
 from models import RemediationPlan
-import logging
 import yaml
 import json
 import uuid
 
 import os
-
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 class RemediationAgent:
@@ -42,7 +39,6 @@ class RemediationAgent:
         self.graph = self._build_graph()
         self.llm_as_judge = DiffEvaluator(llm_judge)
         self.history_compactor = HistoryCompactor(compactor_llm or llm)
-        self.logger = logging.getLogger("remediation_agent")
         self.MAX_ITERATIONS = 30
         self.SYSTEM_PROMPT = REMEDIATION_SYSTEM_PROMPT.format(tool_names=", ".join(t.name for t in tools))
     
@@ -75,27 +71,21 @@ class RemediationAgent:
         return graph.compile()
 
     def _setup_node(self, state: RemediationAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== setup ===")
         branch = f"agent/{slugify(state['plan'].summary)}-{uuid.uuid4().hex[:6]}"
         with repo_lock(state["repo_url"]):
             bare_path = ensure_base_clone(state["repo_url"])
             repo_path = create_task_worktree(bare_path, branch)
-        self.logger.info(f"  repo: {bare_path}")
-        self.logger.info(f"  worktree: {repo_path} (branch {branch})")
         return {"bare_path": bare_path, "repo_path": repo_path, "branch": branch}
 
     def _cleanup_node(self, state: RemediationAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== cleanup ===")
         try:
             remove_task_worktree(state["bare_path"], state["repo_path"])
-            self.logger.info(f"  removed worktree: {state['repo_path']}")
-        except Exception as e:
-            self.logger.info(f"  failed to remove worktree: {e}")
+        except Exception:
+            pass
         return {}
 
     def _reasoning_node(self, state: RemediationAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
-        self.logger.info(f"\n=== iteration {iteration}/{self.MAX_ITERATIONS}: reasoning ===")
 
         plan = state["plan"]
         if state.get("eval_passed") is False:
@@ -115,13 +105,6 @@ class RemediationAgent:
         messages = [SystemMessage(content=system_prompt)] + history
         response = self.llm.invoke(messages)
 
-        if response.tool_calls:
-            for call in response.tool_calls:
-                self.logger.info(f"  agent -> {call['name']}({call['args']})")
-
-        if compaction_edits:
-            self.logger.info(f"  compacted {len(compaction_edits) - 1} old messages into a summary")
-
         return {
             "messages": [*compaction_edits, response],
             "iteration_count": iteration,
@@ -129,14 +112,10 @@ class RemediationAgent:
         }
 
     def _tool_node(self, state: RemediationAgentState) -> dict[str, Any]:
-        result = self._tool_executor.invoke(state)
-        for msg in result["messages"]:
-            self.logger.info(f"  {msg.name} <- {self._preview(msg.content)}")
-        return result
+        return self._tool_executor.invoke(state)
 
     def _tool_routing(self, state: RemediationAgentState) -> Literal["tool_node", "evaluation_node", "end"]:
         if state.get("iteration_count", 0) >= self.MAX_ITERATIONS:
-            self.logger.info(f"  hit MAX_ITERATIONS ({self.MAX_ITERATIONS}), stopping")
             return "end"
         last_message = state["messages"][-1]
         if getattr(last_message, "tool_calls", None):
@@ -144,16 +123,10 @@ class RemediationAgent:
         return "evaluation_node"
     
     def _evaluation_node(self, state: RemediationAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== evaluation ===")
-
         files = get_changed_files(state["repo_path"])
-        self.logger.info(f"  changed files: {files}")
-
         completed_steps = self._steps_completed_from_files(state["repo_path"], files, state["plan"])
-        self.logger.info(f"  completed steps: {completed_steps}")
 
         if not files:
-            self.logger.info("  no files changed, eval_passed=True")
             return { "eval_passed": True, "completed_steps": completed_steps }
 
         # check yaml structure valid or not
@@ -167,7 +140,6 @@ class RemediationAgent:
                 structureValid = False
 
         if not structureValid:
-            self.logger.info(f"  yaml syntax invalid, eval_passed=False: {errorList}")
             return {
                 "eval_passed": False,
                 "completed_steps": completed_steps,
@@ -175,19 +147,15 @@ class RemediationAgent:
             }
 
         diff = get_diff_content(state["repo_path"])
-        self.logger.info(f"  diff:\n{self._preview(diff, limit=1000)}")
         result = self.llm_as_judge.evaluate(self._task_description(state["plan"]), diff)
-        self.logger.info(f"  judge result: correct={result.correct} reasoning={self._preview(result.reasoning)} issues={result.issues}")
 
         if not result.correct:
-            self.logger.info("  eval_passed=False, sending feedback back to reasoning_node")
             return {
                 "eval_passed": False,
                 "completed_steps": completed_steps,
                 "messages": [AIMessage(content=f"Review feedback: {result.reasoning}\nIssues: {result.issues}\nPlease fix.")],
             }
 
-        self.logger.info("  eval_passed=True")
         return {
             "eval_passed": True,
             "eval_reasoning": result.reasoning,
@@ -205,13 +173,10 @@ class RemediationAgent:
     
     def _evaluation_routing(self, state: RemediationAgentState) -> Literal["reasoning_node", "pr_node"]:
         if state["eval_passed"]:
-            self.logger.info("  routing: evaluation_node -> pr_node")
             return "pr_node"
-        self.logger.info("  routing: evaluation_node -> reasoning_node")
         return "reasoning_node"
 
     def _pr_node(self, state: RemediationAgentState) -> dict[str, Any]:
-        self.logger.info("\n=== opening PR ===")
         files = get_changed_files(state["repo_path"])
         try:
             plan_summary = state["plan"].summary
@@ -222,10 +187,8 @@ class RemediationAgent:
                 title=plan_summary[:72],
                 body=self._build_pr_body(files, state.get("eval_reasoning", "")),
             )
-            self.logger.info(f"  opened PR: {pr_url}")
             return {"pr_url": pr_url, "messages": [AIMessage(content=f"Opened PR: {pr_url}")]}
         except Exception as e:
-            self.logger.info(f"  failed to open PR: {e}")
             return {"messages": [AIMessage(content=f"Failed to open PR: {e}")]}
 
     @staticmethod
@@ -259,11 +222,6 @@ class RemediationAgent:
     def _build_pr_body(files: list[str], reasoning: str) -> str:
         file_list = "\n".join(f"- {f}" for f in files) or "(no files changed)"
         return f"## Changed files\n{file_list}\n\n## Judge reasoning\n{reasoning}"
-
-    @staticmethod
-    def _preview(text: Any, limit: int = 300) -> str:
-        text = str(text)
-        return text if len(text) <= limit else text[:limit] + "... [truncated]"
 
     def invoke(self, initial_state: RemediationAgentState) -> RemediationAgentState:
         return self.graph.invoke(initial_state)
