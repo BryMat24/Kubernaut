@@ -13,11 +13,13 @@ import {
 import MessageBubble from "@/components/MessageBubble";
 import Composer from "@/components/Composer";
 import PlanCard from "@/components/PlanCard";
+import MissingInfoCard, { MissingInfoOutcome } from "@/components/MissingInfoCard";
 import ProgressTimeline from "@/components/ProgressTimeline";
 
 export type TimelineItem =
   | { kind: "message"; id: string; message: ChatMessage }
-  | { kind: "pending_plan"; id: string; threadId: string; plan: RemediationPlan };
+  | { kind: "pending_plan"; id: string; threadId: string; plan: RemediationPlan }
+  | { kind: "pending_info"; id: string; threadId: string; question: string };
 
 interface ChatViewProps {
   chatId: string;
@@ -95,6 +97,16 @@ export default function ChatView({ chatId }: ChatViewProps) {
             plan: response.plan!,
           },
         ]);
+      } else if (response.status === "pending_info" && response.question) {
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "pending_info",
+            id: response.thread_id,
+            threadId: response.thread_id,
+            question: response.question!,
+          },
+        ]);
       } else {
         const summary = response.message ?? response.result?.diagnosis_result?.summary ?? "(no diagnosis result)";
         setItems((prev) => [
@@ -118,6 +130,31 @@ export default function ChatView({ chatId }: ChatViewProps) {
       setSending(false);
       setProgressEvents([]);
     }
+  }
+
+  function replaceItem(id: string, outcome: MissingInfoOutcome) {
+    setItems((prev) =>
+      prev.map((i): TimelineItem => {
+        if (i.id !== id) return i;
+        if (outcome.kind === "message") {
+          return {
+            kind: "message",
+            id,
+            message: {
+              id,
+              role: "assistant",
+              content: outcome.content,
+              thread_id: i.kind === "pending_info" || i.kind === "pending_plan" ? i.threadId : null,
+              created_at: new Date().toISOString(),
+            },
+          };
+        }
+        if (outcome.kind === "pending_plan") {
+          return { kind: "pending_plan", id, threadId: (i as { threadId: string }).threadId, plan: outcome.plan };
+        }
+        return { kind: "pending_info", id, threadId: (i as { threadId: string }).threadId, question: outcome.question };
+      })
+    );
   }
 
   return (
@@ -151,30 +188,19 @@ export default function ChatView({ chatId }: ChatViewProps) {
         {items.map((item) =>
           item.kind === "message" ? (
             <MessageBubble key={item.id} message={item.message} />
-          ) : (
+          ) : item.kind === "pending_plan" ? (
             <PlanCard
               key={item.id}
               threadId={item.threadId}
               plan={item.plan}
-              onResolved={(outcome) => {
-                setItems((prev) =>
-                  prev.map((i) =>
-                    i.id === item.id
-                      ? {
-                          kind: "message",
-                          id: item.id,
-                          message: {
-                            id: item.id,
-                            role: "assistant",
-                            content: outcome,
-                            thread_id: item.threadId,
-                            created_at: new Date().toISOString(),
-                          },
-                        }
-                      : i
-                  )
-                );
-              }}
+              onResolved={(outcome) => replaceItem(item.id, { kind: "message", content: outcome })}
+            />
+          ) : (
+            <MissingInfoCard
+              key={item.id}
+              threadId={item.threadId}
+              question={item.question}
+              onResolved={(outcome) => replaceItem(item.id, outcome)}
             />
           )
         )}
