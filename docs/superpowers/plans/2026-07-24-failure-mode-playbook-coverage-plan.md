@@ -41,6 +41,447 @@ svc, `dev-monitoring` ns, port 3100).
 
 ---
 
+## Phase 1: Playbook Content (execute first)
+
+These tasks only touch markdown files under `agents/playbooks/` — no test infrastructure, no
+new fixtures. Do these before Phase 2.
+
+---
+
+### Task 0: `generic.md` — Pod Lifecycle decision tree (re-apply)
+
+**Files:**
+- Modify: `agents/playbooks/generic.md`
+
+This branch/decision-tree rewrite was drafted and applied earlier in the same session this plan
+was written, then reverted along with some other uncommitted edits before this plan was
+restructured to prioritize playbook content over integration-test work. Re-applying it here as an
+explicit, reviewed task rather than leaving it as an assumed prior state.
+
+- [ ] **Step 1: Replace the file's full content**
+
+```markdown
+---
+playbook_id: generic
+category: fallback
+trigger_conditions: []
+---
+
+# Generic Investigation (Pod Lifecycle / Fallback)
+
+Use this when no specialized playbook matches the scope signals — this covers Pod Lifecycle
+startup/crash failures (CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerError)
+plus anything else with no dedicated playbook.
+
+## Checklist
+
+### 1. Identify the affected workload
+
+tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
+(if no specific pod is named: list_resources params: {kind: POD, namespace} first)
+
+Check: phase, containerStatuses[].state (current) and lastState (most recent previous
+termination — exitCode/reason), restartCount.
+
+### 2. Check recent events
+
+tool: get_events   params: {namespace}   conclusive: false
+note: read the event `reason` field verbatim — it names which branch you're in
+(CrashLoopBackOff / ImagePullBackOff / ErrImagePull / Failed / BackOff).
+
+### 3a. Branch: CrashLoopBackOff
+
+tool: error_logs (or recent_logs if the failure is outside error_logs's window)
+params: {app_label, namespace}   conclusive: true
+
+conclusion_criteria:
+- lastState.terminated.exitCode == 137, or an OOMKilled event/log line → this is
+  resource_governance's OOMKilled mechanism, not a generic crash. Say so and stop — do not
+  re-diagnose it here.
+- logs show an unhandled exception/stack trace → application-level crash. Name the exception.
+- logs are clean but events show a failed liveness/readiness probe → probe misconfiguration,
+  not an app crash. Name the probe field likely at fault.
+- no useful logs are returned and restartCount is climbing with no app output at all → go to 3b.
+
+### 3b. Branch: CreateContainerError (container never starts)
+
+tool: recent_logs   params: {app_label, namespace}   conclusive: false
+note: if this also returns nothing, the container never ran long enough to log anything —
+that absence is itself evidence, not a dead end.
+
+tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: true
+conclusion_criteria: waiting.reason is CreateContainerError, or an event names a bad
+command/entrypoint, missing mount, or permission denied.
+
+### 3c. Branch: ImagePullBackOff / ErrImagePull
+
+tool: get_events   params: {namespace}   conclusive: true
+conclusion_criteria (read the message verbatim):
+- "manifest unknown" / "not found" → wrong image name or tag.
+- "unauthorized" / "authentication required" → missing or incorrect imagePullSecret.
+- "connection refused" / "timeout" / "no such host" → registry unreachable.
+
+tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
+note: confirm the exact image:tag requested and whether imagePullSecrets is set.
+
+## Conclusion
+Name exactly one mechanism: application exception (name it) · failing liveness/readiness probe
+(name the config) · CreateContainerError (name the failure) · ImagePullBackOff/ErrImagePull
+(bad tag / missing imagePullSecret / unreachable registry — name which). If evidence points to
+OOMKilled or CreateContainerConfigError, say so and defer — resource_governance and
+secret_configmap own those mechanisms, do not re-derive them here.
+
+## Do not conclude
+- OOMKilled without exitCode 137 or an explicit OOMKilled event/log line.
+- A missing Secret/ConfigMap key (that's CreateContainerConfigError — secret_configmap territory).
+- A ResourceQuota block (the pod would never have been created at all).
+- Runtime CPU/memory throttling on an otherwise-Running pod (resource_governance's territory).
+```
+
+- [ ] **Step 2: Verify the file loads via `PlaybookLibrary`**
+
+Run: `python3 -c "from agents.helpers.playbook_library import PlaybookLibrary; p = PlaybookLibrary(); print(p.get('generic')[:200])"`
+Expected: prints the start of the new content, no exception.
+
+- [ ] **Step 3: Run the unit suite**
+
+Run: `pytest`
+Expected: same pass count as before (this playbook is loaded from disk at runtime, not
+unit-tested directly).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add agents/playbooks/generic.md
+git commit -m "docs: add Pod Lifecycle decision tree to generic playbook"
+```
+
+### Task 3: `scheduling.md` — PID Pressure branch + Node Health limitations note
+
+**Files:**
+- Modify: `agents/playbooks/scheduling.md`
+
+- [ ] **Step 1: Replace the file's full content**
+
+```markdown
+---
+playbook_id: scheduling
+category: scheduling
+trigger_conditions:
+  - "one or more pods are stuck Pending"
+  - "a FailedScheduling event is present"
+  - "a node reports NotReady or a pressure condition"
+---
+
+# Scheduling / Pending Pod Failure
+
+## Checklist
+1. tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
+2. tool: get_events          params: {namespace}                    conclusive: true
+   conclusion_criteria: >
+     read the FailedScheduling reason: 'insufficient cpu/memory' → capacity (confirm with
+     top_nodes); 'untolerated taint' → a node taint with no matching pod toleration; taints named
+     node.kubernetes.io/disk-pressure, memory-pressure, or pid-pressure → node health pressure.
+3. tool: get_node_conditions   params: {name}   conclusive: true
+   conclusion_criteria: >
+     DiskPressure/MemoryPressure/PIDPressure=True explains the matching auto-applied NoSchedule
+     taint (node.kubernetes.io/disk-pressure, memory-pressure, pid-pressure respectively); or the
+     node's taints field shows the specific untolerated taint. PIDPressure specifically means the
+     node is close to exhausting available process IDs (too many processes/threads on the node),
+     not disk or memory.
+4. tool: top_nodes   conclusive: true
+   note: only for the insufficient-resources branch — show allocatable < pod request.
+
+## Conclusion
+Name the specific scheduling barrier (insufficient CPU/memory vs. untolerated taint vs. node
+pressure — disk, memory, or PID) and the node/pod involved.
+
+## Limitations
+If `get_node_conditions` shows Ready=False (Node NotReady), or you suspect the kubelet itself has
+stopped reporting: state that the node is NotReady and name it, but do not speculate about *why*
+the kubelet stopped — this toolset has no way to inspect kubelet process state, node system logs,
+or restart anything. Recommend a human check the node directly.
+
+## Do not conclude
+- Image pull failure or CrashLoopBackOff.
+- The pod's own resource requests are "misconfigured" when the real cause is a taint/capacity.
+- An arbitrary/manual taint unrelated to node health when the taint is pressure-induced.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add agents/playbooks/scheduling.md
+git commit -m "docs: add PID Pressure branch and Node Health limitations to scheduling playbook"
+```
+
+---
+
+
+### Task 5: `resource_governance.md` — OOMKilled / CPU Throttling branch
+
+**Files:**
+- Modify: `agents/playbooks/resource_governance.md`
+
+- [ ] **Step 1: Replace the file's full content**
+
+```markdown
+---
+playbook_id: resource_governance
+category: resource_governance
+trigger_conditions:
+  - "a Deployment has fewer ready replicas than desired with no crashing pods"
+  - "a FailedCreate / exceeded quota event is present"
+  - "a pod was OOMKilled or is being CPU-throttled"
+---
+
+# Resource Governance Failure (Quota-Blocked Creation / Runtime OOM & CPU Pressure)
+
+## Branch A: Quota-blocked creation
+
+1. tool: get_events   params: {namespace}   conclusive: true
+   conclusion_criteria: a FailedCreate event on the ReplicaSet mentioning 'exceeded quota'.
+2. tool: get_resource   params: {kind: RESOURCEQUOTA, name, namespace}   conclusive: true
+   conclusion_criteria: hard limit (e.g. pods=1) equals used, blocking further creation.
+3. tool: get_resource   params: {kind: DEPLOYMENT, name, namespace}   conclusive: false
+   note: desired replicas > ready/available confirms the shortfall is creation-blocked, not crashing.
+
+### Conclusion (Branch A)
+root_cause = a ResourceQuota caps a resource (e.g. pods) below what the Deployment requests, so
+the ReplicaSet controller cannot create the remaining pods. Name the quota and the shortfall.
+
+## Branch B: Runtime OOMKilled / CPU Throttling
+
+Use this branch when the pod already exists and is Running or restarting — not when it was
+never created (that's Branch A).
+
+1. tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
+   note: check containerStatuses[].lastState.terminated for exitCode/reason, and restartCount.
+2. tool: oom_killed_pods   params: {namespace}   conclusive: true
+   conclusion_criteria: this pod/container is listed → confirmed OOMKilled. Go to Conclusion (B1).
+3. tool: cpu_saturation   params: {app_label}   conclusive: true
+   conclusion_criteria: >
+     only relevant if the pod is Running (not restarting) but slow/underperforming. A value at or
+     near 1 means the container is using all of its CPU limit — confirmed throttling. Go to
+     Conclusion (B2).
+
+### Conclusion (Branch B1 — OOMKilled)
+root_cause = the container's memory limit is set below what its process actually needs, so the
+kernel OOM-kills it (exitCode 137, reason OOMKilled). Name the container and its memory limit.
+
+### Conclusion (Branch B2 — CPU Throttling)
+root_cause = the container's CPU limit is set below what its workload actually demands, causing
+heavy throttling. Name the container and its CPU limit. This is a performance issue, not a crash.
+
+## Do not conclude
+- The missing pods are crashlooping or failing health checks when they were never created (that's
+  Branch A's mechanism, not Branch B's).
+- Image pull failure.
+- Insufficient node CPU or memory capacity (Branch A/B are about the container's own
+  requests/limits, not node-level capacity — that's scheduling.md's territory).
+- An application bug causing high CPU/memory usage when the limit itself is the constraint.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add agents/playbooks/resource_governance.md
+git commit -m "docs: add runtime OOMKilled/CPU Throttling branch to resource_governance playbook"
+```
+
+---
+
+
+### Task 8: `storage.md` — Multi-Attach Error branch (documented, no fixture)
+
+**Files:**
+- Modify: `agents/playbooks/storage.md`
+
+- [ ] **Step 1: Replace the file's full content**
+
+```markdown
+---
+playbook_id: storage
+category: storage
+trigger_conditions:
+  - "a PVC is stuck Pending or a pod cannot mount a volume"
+  - "an event mentions a StorageClass could not be found or no volumes available"
+  - "an event mentions a Multi-Attach error for a volume"
+---
+
+# Storage / PVC Failure
+
+## Branch A: PVC Pending — missing StorageClass
+
+1. tool: get_resource   params: {kind: PERSISTENTVOLUMECLAIM, name, namespace}   conclusive: false
+   note: status Pending is the starting signal.
+2. tool: get_events   params: {namespace}   conclusive: true
+   conclusion_criteria: an event on the PVC/pod naming a StorageClass that could not be found,
+   or 'no persistent volumes available'.
+3. tool: list_resources   params: {kind: STORAGECLASS}   conclusive: true
+   conclusion_criteria: the referenced StorageClass name is absent from the list.
+
+### Conclusion (Branch A)
+root_cause = the PVC references a StorageClass that does not exist, so no PV can be provisioned
+or bound and the pod stays Pending. Name the PVC and the missing StorageClass.
+
+## Branch B: Multi-Attach Error
+
+1. tool: get_events   params: {namespace}   conclusive: true
+   conclusion_criteria: >
+     an event mentioning "Multi-Attach error for volume ... Volume is already exclusively
+     attached to one node and can't be attached to another" — this occurs when a
+     ReadWriteOnce PVC's pod is rescheduled to a different node before the volume detaches from
+     the old one (e.g. after a node failure or a fast reschedule).
+2. tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
+   note: confirm the pod is stuck in ContainerCreating and which node it's scheduled to now.
+
+### Conclusion (Branch B)
+root_cause = the PVC is ReadWriteOnce and still attached to its previous node; the new pod can't
+mount it until the old attachment detaches (or the old node is confirmed gone). Name the PVC and
+both the old and new node if visible in the event.
+
+## Do not conclude
+- Insufficient CPU or memory.
+- Image pull failure.
+- A node taint or scheduling issue unrelated to storage.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add agents/playbooks/storage.md
+git commit -m "docs: add documented Multi-Attach Error branch to storage playbook"
+```
+
+---
+
+
+### Task 9: `network.md` — DNS Failure + LoadBalancer Pending branches
+
+**Files:**
+- Modify: `agents/playbooks/network.md`
+
+- [ ] **Step 1: Insert two new numbered steps** (between the existing "### 9. Check Kubernetes
+  events" section and "## Conclusion")
+
+Insert after the `---` that follows step 9, before `## Conclusion`:
+
+```markdown
+### 10. Check DNS resolution
+
+tool: list_resources
+params: {kind: service, namespace}
+conclusive: false
+
+Check:
+
+- does a Service with the exact hostname/name the client is trying to reach actually exist in
+  this namespace (or the referenced namespace, if the client uses a fully-qualified name)?
+
+tool: get_events
+params: {namespace}
+conclusive: false
+
+Check:
+
+- CoreDNS pods in kube-system Running and Ready (list_resources params: {kind: pod, namespace:
+  kube-system, label_selector: k8s-app=kube-dns})
+
+Possible findings:
+
+- the target Service name does not exist at all -- DNS has nothing to resolve
+- the client is using the wrong namespace suffix (cross-namespace DNS needs
+  <service>.<namespace>.svc.cluster.local)
+- CoreDNS itself is unhealthy (Pods not Ready) -- rare, check this last
+
+---
+
+### 11. Check LoadBalancer status (only if Service type is LoadBalancer)
+
+tool: get_resource
+params: {kind: service, name, namespace}
+conclusive: true
+
+Check:
+
+- status.loadBalancer.ingress is empty/absent
+- no cloud-controller-manager or LoadBalancer implementation exists in this cluster
+
+Possible findings:
+
+- the Service is otherwise correctly configured (selector matches, endpoints ready) but stuck
+  Pending because nothing in this cluster can provision an external IP
+
+---
+```
+
+- [ ] **Step 2: Extend the `## Conclusion` bullet list**
+
+Add these two bullets to the existing "supported when the evidence identifies one of the
+following" list:
+```markdown
+- The target Service name doesn't exist at all -- DNS has nothing to resolve
+- A LoadBalancer Service has no controller available to provision an external IP
+```
+
+And to the "Examples" list:
+```markdown
+- DNS: target Service does not exist
+- LoadBalancer stuck Pending: no controller available in this cluster
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add agents/playbooks/network.md
+git commit -m "docs: add DNS Failure and LoadBalancer Pending branches to network playbook"
+```
+
+---
+
+
+### Task 15: `autoscaling.md` — Cluster Autoscaler limitation note
+
+**Files:**
+- Modify: `agents/playbooks/autoscaling.md`
+
+- [ ] **Step 1: Append a `## Limitations` section** (insert before the final `## Do not conclude`
+  section)
+
+```markdown
+## Limitations
+This toolset has no visibility into a cluster autoscaler (cloud-provider node provisioning). If
+pods are Unschedulable due to insufficient node capacity and you'd expect the cluster to scale
+up, state that node capacity is insufficient and recommend scaling (manually or via
+cluster-autoscaler) — do not speculate about why an autoscaler failed to provision nodes; that
+requires cloud-provider/autoscaler logs this agent cannot see.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add agents/playbooks/autoscaling.md
+git commit -m "docs: document Cluster Autoscaler Not Scaling as a tool-visibility limitation"
+```
+
+---
+
+
+---
+
+## Phase 2: Integration Test Infrastructure + New Fixtures (deferred)
+
+**Deferred — do not execute yet.** Task 1 (shared `conftest.py`) is already implemented,
+reviewed, and committed (`bce7b59`) independent of this reprioritization; it's harmless to leave
+in place even while Phase 2 execution is paused. Task 2 (migrating the 7 existing integration
+test files) has uncommitted in-progress edits from before this reprioritization — leave them as
+they are (they're a correctness fix, not experimental) and resume Task 2 when Phase 2 execution
+starts. Tasks 4, 6, 7, 10-14, 16-18 (new scenario fixtures) have not been started. Resume this
+phase only when explicitly asked.
+
+---
+
 ### Task 1: Shared integration-test fixtures (`conftest.py`)
 
 **Files:**
@@ -231,6 +672,7 @@ git commit -m "test: add shared integration-test fixtures with correct Diagnosis
 
 ---
 
+
 ### Task 2: Migrate all 7 existing integration test files to the shared fixtures
 
 **Files:**
@@ -391,66 +833,6 @@ git commit -m "test: migrate integration tests to shared conftest fixtures, fix 
 
 ---
 
-### Task 3: `scheduling.md` — PID Pressure branch + Node Health limitations note
-
-**Files:**
-- Modify: `agents/playbooks/scheduling.md`
-
-- [ ] **Step 1: Replace the file's full content**
-
-```markdown
----
-playbook_id: scheduling
-category: scheduling
-trigger_conditions:
-  - "one or more pods are stuck Pending"
-  - "a FailedScheduling event is present"
-  - "a node reports NotReady or a pressure condition"
----
-
-# Scheduling / Pending Pod Failure
-
-## Checklist
-1. tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
-2. tool: get_events          params: {namespace}                    conclusive: true
-   conclusion_criteria: >
-     read the FailedScheduling reason: 'insufficient cpu/memory' → capacity (confirm with
-     top_nodes); 'untolerated taint' → a node taint with no matching pod toleration; taints named
-     node.kubernetes.io/disk-pressure, memory-pressure, or pid-pressure → node health pressure.
-3. tool: get_node_conditions   params: {name}   conclusive: true
-   conclusion_criteria: >
-     DiskPressure/MemoryPressure/PIDPressure=True explains the matching auto-applied NoSchedule
-     taint (node.kubernetes.io/disk-pressure, memory-pressure, pid-pressure respectively); or the
-     node's taints field shows the specific untolerated taint. PIDPressure specifically means the
-     node is close to exhausting available process IDs (too many processes/threads on the node),
-     not disk or memory.
-4. tool: top_nodes   conclusive: true
-   note: only for the insufficient-resources branch — show allocatable < pod request.
-
-## Conclusion
-Name the specific scheduling barrier (insufficient CPU/memory vs. untolerated taint vs. node
-pressure — disk, memory, or PID) and the node/pod involved.
-
-## Limitations
-If `get_node_conditions` shows Ready=False (Node NotReady), or you suspect the kubelet itself has
-stopped reporting: state that the node is NotReady and name it, but do not speculate about *why*
-the kubelet stopped — this toolset has no way to inspect kubelet process state, node system logs,
-or restart anything. Recommend a human check the node directly.
-
-## Do not conclude
-- Image pull failure or CrashLoopBackOff.
-- The pod's own resource requests are "misconfigured" when the real cause is a taint/capacity.
-- An arbitrary/manual taint unrelated to node health when the taint is pressure-induced.
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add agents/playbooks/scheduling.md
-git commit -m "docs: add PID Pressure branch and Node Health limitations to scheduling playbook"
-```
-
----
 
 ### Task 4: `node-pid-pressure` fixture + test
 
@@ -615,78 +997,6 @@ git commit -m "test: add node-pid-pressure scheduling scenario"
 
 ---
 
-### Task 5: `resource_governance.md` — OOMKilled / CPU Throttling branch
-
-**Files:**
-- Modify: `agents/playbooks/resource_governance.md`
-
-- [ ] **Step 1: Replace the file's full content**
-
-```markdown
----
-playbook_id: resource_governance
-category: resource_governance
-trigger_conditions:
-  - "a Deployment has fewer ready replicas than desired with no crashing pods"
-  - "a FailedCreate / exceeded quota event is present"
-  - "a pod was OOMKilled or is being CPU-throttled"
----
-
-# Resource Governance Failure (Quota-Blocked Creation / Runtime OOM & CPU Pressure)
-
-## Branch A: Quota-blocked creation
-
-1. tool: get_events   params: {namespace}   conclusive: true
-   conclusion_criteria: a FailedCreate event on the ReplicaSet mentioning 'exceeded quota'.
-2. tool: get_resource   params: {kind: RESOURCEQUOTA, name, namespace}   conclusive: true
-   conclusion_criteria: hard limit (e.g. pods=1) equals used, blocking further creation.
-3. tool: get_resource   params: {kind: DEPLOYMENT, name, namespace}   conclusive: false
-   note: desired replicas > ready/available confirms the shortfall is creation-blocked, not crashing.
-
-### Conclusion (Branch A)
-root_cause = a ResourceQuota caps a resource (e.g. pods) below what the Deployment requests, so
-the ReplicaSet controller cannot create the remaining pods. Name the quota and the shortfall.
-
-## Branch B: Runtime OOMKilled / CPU Throttling
-
-Use this branch when the pod already exists and is Running or restarting — not when it was
-never created (that's Branch A).
-
-1. tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
-   note: check containerStatuses[].lastState.terminated for exitCode/reason, and restartCount.
-2. tool: oom_killed_pods   params: {namespace}   conclusive: true
-   conclusion_criteria: this pod/container is listed → confirmed OOMKilled. Go to Conclusion (B1).
-3. tool: cpu_saturation   params: {app_label}   conclusive: true
-   conclusion_criteria: >
-     only relevant if the pod is Running (not restarting) but slow/underperforming. A value at or
-     near 1 means the container is using all of its CPU limit — confirmed throttling. Go to
-     Conclusion (B2).
-
-### Conclusion (Branch B1 — OOMKilled)
-root_cause = the container's memory limit is set below what its process actually needs, so the
-kernel OOM-kills it (exitCode 137, reason OOMKilled). Name the container and its memory limit.
-
-### Conclusion (Branch B2 — CPU Throttling)
-root_cause = the container's CPU limit is set below what its workload actually demands, causing
-heavy throttling. Name the container and its CPU limit. This is a performance issue, not a crash.
-
-## Do not conclude
-- The missing pods are crashlooping or failing health checks when they were never created (that's
-  Branch A's mechanism, not Branch B's).
-- Image pull failure.
-- Insufficient node CPU or memory capacity (Branch A/B are about the container's own
-  requests/limits, not node-level capacity — that's scheduling.md's territory).
-- An application bug causing high CPU/memory usage when the limit itself is the constraint.
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add agents/playbooks/resource_governance.md
-git commit -m "docs: add runtime OOMKilled/CPU Throttling branch to resource_governance playbook"
-```
-
----
 
 ### Task 6: `oomkilled-low-memory-limit` fixture + test
 
@@ -803,6 +1113,7 @@ git commit -m "test: add oomkilled-low-memory-limit resource_governance scenario
 
 ---
 
+
 ### Task 7: `cpu-throttling-low-cpu-limit` fixture + test
 
 **Files:**
@@ -918,152 +1229,6 @@ git commit -m "test: add cpu-throttling-low-cpu-limit resource_governance scenar
 
 ---
 
-### Task 8: `storage.md` — Multi-Attach Error branch (documented, no fixture)
-
-**Files:**
-- Modify: `agents/playbooks/storage.md`
-
-- [ ] **Step 1: Replace the file's full content**
-
-```markdown
----
-playbook_id: storage
-category: storage
-trigger_conditions:
-  - "a PVC is stuck Pending or a pod cannot mount a volume"
-  - "an event mentions a StorageClass could not be found or no volumes available"
-  - "an event mentions a Multi-Attach error for a volume"
----
-
-# Storage / PVC Failure
-
-## Branch A: PVC Pending — missing StorageClass
-
-1. tool: get_resource   params: {kind: PERSISTENTVOLUMECLAIM, name, namespace}   conclusive: false
-   note: status Pending is the starting signal.
-2. tool: get_events   params: {namespace}   conclusive: true
-   conclusion_criteria: an event on the PVC/pod naming a StorageClass that could not be found,
-   or 'no persistent volumes available'.
-3. tool: list_resources   params: {kind: STORAGECLASS}   conclusive: true
-   conclusion_criteria: the referenced StorageClass name is absent from the list.
-
-### Conclusion (Branch A)
-root_cause = the PVC references a StorageClass that does not exist, so no PV can be provisioned
-or bound and the pod stays Pending. Name the PVC and the missing StorageClass.
-
-## Branch B: Multi-Attach Error
-
-1. tool: get_events   params: {namespace}   conclusive: true
-   conclusion_criteria: >
-     an event mentioning "Multi-Attach error for volume ... Volume is already exclusively
-     attached to one node and can't be attached to another" — this occurs when a
-     ReadWriteOnce PVC's pod is rescheduled to a different node before the volume detaches from
-     the old one (e.g. after a node failure or a fast reschedule).
-2. tool: describe_resource   params: {kind: POD, name, namespace}   conclusive: false
-   note: confirm the pod is stuck in ContainerCreating and which node it's scheduled to now.
-
-### Conclusion (Branch B)
-root_cause = the PVC is ReadWriteOnce and still attached to its previous node; the new pod can't
-mount it until the old attachment detaches (or the old node is confirmed gone). Name the PVC and
-both the old and new node if visible in the event.
-
-## Do not conclude
-- Insufficient CPU or memory.
-- Image pull failure.
-- A node taint or scheduling issue unrelated to storage.
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add agents/playbooks/storage.md
-git commit -m "docs: add documented Multi-Attach Error branch to storage playbook"
-```
-
----
-
-### Task 9: `network.md` — DNS Failure + LoadBalancer Pending branches
-
-**Files:**
-- Modify: `agents/playbooks/network.md`
-
-- [ ] **Step 1: Insert two new numbered steps** (between the existing "### 9. Check Kubernetes
-  events" section and "## Conclusion")
-
-Insert after the `---` that follows step 9, before `## Conclusion`:
-
-```markdown
-### 10. Check DNS resolution
-
-tool: list_resources
-params: {kind: service, namespace}
-conclusive: false
-
-Check:
-
-- does a Service with the exact hostname/name the client is trying to reach actually exist in
-  this namespace (or the referenced namespace, if the client uses a fully-qualified name)?
-
-tool: get_events
-params: {namespace}
-conclusive: false
-
-Check:
-
-- CoreDNS pods in kube-system Running and Ready (list_resources params: {kind: pod, namespace:
-  kube-system, label_selector: k8s-app=kube-dns})
-
-Possible findings:
-
-- the target Service name does not exist at all -- DNS has nothing to resolve
-- the client is using the wrong namespace suffix (cross-namespace DNS needs
-  <service>.<namespace>.svc.cluster.local)
-- CoreDNS itself is unhealthy (Pods not Ready) -- rare, check this last
-
----
-
-### 11. Check LoadBalancer status (only if Service type is LoadBalancer)
-
-tool: get_resource
-params: {kind: service, name, namespace}
-conclusive: true
-
-Check:
-
-- status.loadBalancer.ingress is empty/absent
-- no cloud-controller-manager or LoadBalancer implementation exists in this cluster
-
-Possible findings:
-
-- the Service is otherwise correctly configured (selector matches, endpoints ready) but stuck
-  Pending because nothing in this cluster can provision an external IP
-
----
-```
-
-- [ ] **Step 2: Extend the `## Conclusion` bullet list**
-
-Add these two bullets to the existing "supported when the evidence identifies one of the
-following" list:
-```markdown
-- The target Service name doesn't exist at all -- DNS has nothing to resolve
-- A LoadBalancer Service has no controller available to provision an external IP
-```
-
-And to the "Examples" list:
-```markdown
-- DNS: target Service does not exist
-- LoadBalancer stuck Pending: no controller available in this cluster
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add agents/playbooks/network.md
-git commit -m "docs: add DNS Failure and LoadBalancer Pending branches to network playbook"
-```
-
----
 
 ### Task 10: New `test_network.py` + `service-selector-mismatch` fixture
 
@@ -1213,6 +1378,7 @@ git commit -m "test: add test_network.py with service-selector-mismatch scenario
 
 ---
 
+
 ### Task 11: `networkpolicy-deny-ingress` fixture + test
 
 **Files:**
@@ -1334,6 +1500,7 @@ git commit -m "test: add networkpolicy-deny-ingress network scenario"
 ```
 
 ---
+
 
 ### Task 12: `ingress-wrong-backend-port` fixture + test
 
@@ -1464,6 +1631,7 @@ git commit -m "test: add ingress-wrong-backend-port network scenario"
 
 ---
 
+
 ### Task 13: `dns-nonexistent-service` fixture + test
 
 **Files:**
@@ -1566,6 +1734,7 @@ git commit -m "test: add dns-nonexistent-service network scenario"
 ```
 
 ---
+
 
 ### Task 14: `loadbalancer-pending-no-controller` fixture + test
 
@@ -1679,31 +1848,6 @@ git commit -m "test: add loadbalancer-pending-no-controller network scenario"
 
 ---
 
-### Task 15: `autoscaling.md` — Cluster Autoscaler limitation note
-
-**Files:**
-- Modify: `agents/playbooks/autoscaling.md`
-
-- [ ] **Step 1: Append a `## Limitations` section** (insert before the final `## Do not conclude`
-  section)
-
-```markdown
-## Limitations
-This toolset has no visibility into a cluster autoscaler (cloud-provider node provisioning). If
-pods are Unschedulable due to insufficient node capacity and you'd expect the cluster to scale
-up, state that node capacity is insufficient and recommend scaling (manually or via
-cluster-autoscaler) — do not speculate about why an autoscaler failed to provision nodes; that
-requires cloud-provider/autoscaler logs this agent cannot see.
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add agents/playbooks/autoscaling.md
-git commit -m "docs: document Cluster Autoscaler Not Scaling as a tool-visibility limitation"
-```
-
----
 
 ### Task 16: New `test_pod_lifecycle.py` + `crashloopbackoff-app-error` fixture
 
@@ -1848,6 +1992,7 @@ git commit -m "test: add test_pod_lifecycle.py with crashloopbackoff-app-error s
 
 ---
 
+
 ### Task 17: `imagepullbackoff-bad-tag` fixture + test
 
 **Files:**
@@ -1945,6 +2090,7 @@ git commit -m "test: add imagepullbackoff-bad-tag pod lifecycle scenario"
 ```
 
 ---
+
 
 ### Task 18: `createcontainererror-bad-entrypoint` fixture + test
 
