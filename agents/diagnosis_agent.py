@@ -223,12 +223,29 @@ class DiagnosisAgent:
 
     async def _evaluate_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
         self.logger.info("\n=== evaluate ===")
+        messages = state["messages"]
+        last_message = messages[-1]
+        pending_calls = getattr(last_message, "tool_calls", None) or []
+        stop_messages = [
+            ToolMessage(
+                content="[not executed] Investigation budget exhausted before this call could run.",
+                name=call["name"],
+                tool_call_id=call["id"],
+            )
+            for call in pending_calls
+        ]
+        if stop_messages:
+            self.logger.info(
+                f"  budget exhausted with {len(stop_messages)} pending tool call(s) -- synthesizing stop responses"
+            )
+        evaluation_messages = messages + stop_messages
+
         playbook = self.playbooks.get(state["selected_playbook_id"])
         verdict = await self.evaluator.evaluate(
             state["query"],
             state.get("current_hypothesis", ""),
             playbook.body,
-            state["messages"],
+            evaluation_messages,
             state.get("hypothesis_count", 0),
             self.MAX_HYPOTHESES,
         )
@@ -237,6 +254,8 @@ class DiagnosisAgent:
             "last_verdict": verdict.verdict,
             "requires_remediation_hint": verdict.requires_remediation,
         }
+        if stop_messages:
+            update["messages"] = stop_messages
         if verdict.verdict == "reformulate":
             update["ruled_out"] = state.get("ruled_out", []) + [
                 {
