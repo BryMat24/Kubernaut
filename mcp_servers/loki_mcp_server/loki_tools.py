@@ -51,26 +51,26 @@ def _range_query(logql: str, minutes: int, limit: int) -> list[dict]:
 
 @mcp.tool
 def recent_logs(
-    app: Annotated[str, "Value of the app label identifying the workload."],
+    app_label: Annotated[str, "Value of the workload's 'app' label (see the Deployment/Pod labels returned by list_resources)."],
     namespace: Annotated[str, "Namespace containing the workload."] = "default",
     lines: Annotated[int, "Maximum number of log lines to return, newest first."] = 100,
 ) -> list[dict]:
     """
     Retrieve the most recent log lines across all pods of a workload, aggregated by label.
 
-    LogQL: {app="$app", namespace="$namespace"}
+    LogQL: {app="$app_label", namespace="$namespace"}
 
     Use when: you need a general view of what a workload is currently logging and don't
     already know a specific pod name -- covers every replica at once. If you already know
     the exact pod name and want its logs, use get_pod_logs instead.
     """
-    logql = f'{{app="{app}", namespace="{namespace}"}}'
+    logql = f'{{app="{app_label}", namespace="{namespace}"}}'
     return _range_query(logql, minutes=60, limit=lines)
 
 
 @mcp.tool
 def error_logs(
-    app: Annotated[str, "Value of the app label identifying the workload."],
+    app_label: Annotated[str, "Value of the workload's 'app' label (see the Deployment/Pod labels returned by list_resources)."],
     namespace: Annotated[str, "Namespace containing the workload."] = "default",
     minutes: Annotated[int, "How many minutes back to search."] = 15,
 ) -> list[dict]:
@@ -78,12 +78,12 @@ def error_logs(
     Retrieve log lines matching error/exception/panic/fatal patterns across all pods of a
     workload, over a recent time window.
 
-    LogQL: {app="$app", namespace="$namespace"} |~ "(?i)error|exception"
+    LogQL: {app="$app_label", namespace="$namespace"} |~ "(?i)error|exception"
 
     Use when: confirming whether a workload is actually logging failures -- e.g. after a
     Prometheus metric (error_rate, latency_p95) shows a symptom but Kubernetes-level evidence
     (Pod status, Service endpoints) looks healthy. This is where the concrete error message or
     stack trace actually lives.
     """
-    logql = f'{{app="{app}", namespace="{namespace}"}} |~ "(?i)error|exception|panic|fatal"'
+    logql = f'{{app="{app_label}", namespace="{namespace}"}} |~ "(?i)error|exception|panic|fatal"'
     return _range_query(logql, minutes=minutes, limit=200)

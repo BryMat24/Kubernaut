@@ -128,7 +128,7 @@ Possible findings:
 ### 7. Check application error rate
 
 tool: error_rate
-params: {app}
+params: {app_label}
 conclusive: false
 
 Purpose:
@@ -140,7 +140,7 @@ Determine whether failures affect all replicas rather than one Pod.
 ### 8. Check application logs
 
 tool: error_logs
-params: {app, namespace}
+params: {app_label, namespace}
 conclusive: false
 
 Purpose:

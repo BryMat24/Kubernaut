@@ -47,20 +47,20 @@ def _instant_query(promql: str) -> list[dict]:
 # ERROR RATE
 @mcp.tool
 def error_rate(
-    app: Annotated[str, "Value of the app label identifying the service."],
+    app_label: Annotated[str, "Value of the workload's 'app' label (see the Deployment/Pod labels returned by list_resources)."],
 ) -> list[dict]:
     """
     Retrieve the fraction of HTTP requests returning 5xx errors over the last 5 minutes.
 
-    PromQL: sum(rate(http_requests_total{app="$app", status=~"5.."}[5m])) /
-    sum(rate(http_requests_total{app="$app"}[5m]))
+    PromQL: sum(rate(http_requests_total{container="$app_label", status=~"5.."}[5m])) /
+    sum(rate(http_requests_total{container="$app_label"}[5m]))
 
     Use when: investigating whether a service is actively failing requests — a value near 0
     means healthy, a value approaching 1 means most/all requests are erroring.
     """
     promql = (
-        f'sum(rate(http_requests_total{{container="{app}", status=~"5.."}}[5m])) / '
-        f'sum(rate(http_requests_total{{container="{app}"}}[5m]))'
+        f'sum(rate(http_requests_total{{container="{app_label}", status=~"5.."}}[5m])) / '
+        f'sum(rate(http_requests_total{{container="{app_label}"}}[5m]))'
     )
     return _instant_query(promql)
 
@@ -68,19 +68,19 @@ def error_rate(
 # LATENCY
 @mcp.tool
 def latency_p95(
-    app: Annotated[str, "Value of the app label identifying the service."],
+    app_label: Annotated[str, "Value of the workload's 'app' label (see the Deployment/Pod labels returned by list_resources)."],
 ) -> list[dict]:
     """
     Retrieve the 95th-percentile HTTP request latency over the last 5 minutes.
 
-    PromQL: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="$app"}[5m])) by (le))
+    PromQL: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{container="$app_label"}[5m])) by (le))
 
     Use when: confirming whether users are experiencing slow responses, or checking whether a
     recent change regressed latency — this reads the histogram buckets, not an average, so it
     isn't skewed by a handful of fast requests masking a slow tail.
     """
     promql = (
-        f'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{{container="{app}"}}[5m])) by (le))'
+        f'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{{container="{app_label}"}}[5m])) by (le))'
     )
     return _instant_query(promql)
 
@@ -105,20 +105,20 @@ def oom_killed_pods(
 # CPU SATURATION
 @mcp.tool
 def cpu_saturation(
-    app: Annotated[str, "Value of the app label identifying the service."],
+    app_label: Annotated[str, "Value of the workload's 'app' label (see the Deployment/Pod labels returned by list_resources)."],
 ) -> list[dict]:
     """
     Retrieve each matching container's CPU usage as a fraction of its configured CPU limit.
 
-    PromQL: sum(rate(container_cpu_usage_seconds_total{container="$app"}[5m])) /
-    sum(kube_pod_container_resource_limits{container="$app", resource="cpu"})
+    PromQL: sum(rate(container_cpu_usage_seconds_total{container="$app_label"}[5m])) /
+    sum(kube_pod_container_resource_limits{container="$app_label", resource="cpu"})
 
     Use when: checking whether a container is CPU-throttled or close to its CPU limit — a value
     approaching 1 means the container is close to saturating its limit, which can cause request
     latency or timeouts even when the container isn't crashing.
     """
     promql = (
-        f'sum(rate(container_cpu_usage_seconds_total{{container="{app}"}}[5m])) / '
-        f'sum(kube_pod_container_resource_limits{{container="{app}", resource="cpu"}})'
+        f'sum(rate(container_cpu_usage_seconds_total{{container="{app_label}"}}[5m])) / '
+        f'sum(kube_pod_container_resource_limits{{container="{app_label}", resource="cpu"}})'
     )
     return _instant_query(promql)
