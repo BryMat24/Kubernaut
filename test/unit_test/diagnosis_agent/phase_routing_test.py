@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 from agents.diagnosis_agent import DiagnosisAgent
 
@@ -65,9 +66,6 @@ def test_evaluate_routing_conclusive_finalizes():
     agent = _agent()
     state = {"last_verdict": "conclusive", "hypothesis_count": 1}
     assert agent._evaluate_routing(state) == "finalize_node"
-
-
-import asyncio
 
 
 def test_evaluate_node_synthesizes_stop_messages_for_dangling_tool_calls():
@@ -146,3 +144,67 @@ def test_evaluate_node_does_not_synthesize_messages_when_no_pending_calls():
 
     assert len(captured["messages"]) == 1
     assert "messages" not in result
+
+
+def test_explain_node_answers_directly_when_no_tool_calls_needed():
+    agent = _agent()
+    agent.logger = MagicMock()
+    agent.MAX_EXPLAIN_ITERATIONS = 5
+
+    final_answer = _ai([])
+    final_answer.content = "An HPA scales replicas based on observed metrics."
+
+    agent.scope_llm = MagicMock()
+    agent.scope_llm.ainvoke = AsyncMock(return_value=final_answer)
+    agent.scope_tool_executor = MagicMock()
+    agent.scope_tool_executor.ainvoke = AsyncMock()
+
+    result = asyncio.run(agent._explain_node({"query": "what does an HPA do"}))
+
+    assert result["messages"] == [final_answer]
+    agent.scope_tool_executor.ainvoke.assert_not_called()
+
+
+def test_explain_node_calls_tools_then_answers():
+    agent = _agent()
+    agent.logger = MagicMock()
+    agent.MAX_EXPLAIN_ITERATIONS = 5
+
+    tool_call_msg = _ai([{"id": "call-1", "name": "get_resource", "args": {"kind": "hpa"}}])
+    final_answer = _ai([])
+    final_answer.content = "The HPA sample-app-hpa targets 70% CPU utilization."
+    tool_result_msg = MagicMock(name="tool_result")
+
+    agent.scope_llm = MagicMock()
+    agent.scope_llm.ainvoke = AsyncMock(side_effect=[tool_call_msg, final_answer])
+    agent.scope_tool_executor = MagicMock()
+    agent.scope_tool_executor.ainvoke = AsyncMock(return_value={"messages": [tool_result_msg]})
+
+    result = asyncio.run(agent._explain_node({"query": "what does the HPA target"}))
+
+    assert result["messages"] == [tool_call_msg, tool_result_msg, final_answer]
+    agent.scope_tool_executor.ainvoke.assert_called_once()
+
+
+def test_explain_node_forces_final_answer_when_budget_exhausted():
+    agent = _agent()
+    agent.logger = MagicMock()
+    agent.MAX_EXPLAIN_ITERATIONS = 2
+
+    always_calls_tools = _ai([{"id": "call-1", "name": "get_resource", "args": {}}])
+    forced_final = _ai([])
+    forced_final.content = "Based on what I found so far: ..."
+    tool_result_msg = MagicMock(name="tool_result")
+
+    agent.scope_llm = MagicMock()
+    # ainvoke is called MAX_EXPLAIN_ITERATIONS times inside the loop (always requesting a tool
+    # call), then once more after the loop to force a final answer with no tool calls.
+    agent.scope_llm.ainvoke = AsyncMock(side_effect=[always_calls_tools, always_calls_tools, forced_final])
+    agent.scope_tool_executor = MagicMock()
+    agent.scope_tool_executor.ainvoke = AsyncMock(return_value={"messages": [tool_result_msg]})
+
+    result = asyncio.run(agent._explain_node({"query": "q"}))
+
+    assert result["messages"][-1] is forced_final
+    assert agent.scope_llm.ainvoke.call_count == 3
+    assert agent.scope_tool_executor.ainvoke.call_count == 2

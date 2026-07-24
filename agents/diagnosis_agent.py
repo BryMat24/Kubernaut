@@ -37,15 +37,16 @@ class DiagnosisAgent:
     ) -> None:
         self.logger = logging.getLogger("diagnosisAgent")
         self.MAX_SCOPE_CALLS = 8
+        self.MAX_EXPLAIN_ITERATIONS = 5
         self.MAX_INVESTIGATE_ITERATIONS = 8
         self.MAX_HYPOTHESES = 3
 
         self.scope_tool_executor = ToolNode(scope_tools)
         self.tool_executor = ToolNode(investigate_tools)
 
-        self.llm = llm.bind_tools(investigate_tools)            # main model, used only in investigate
-        self.scope_llm = utility_llm.bind_tools(scope_tools)    # cheap model, used only in scope
-        self.utility_llm = utility_llm                          # cheap model, used bare for explain
+        self.llm = llm.bind_tools(investigate_tools)
+        self.scope_llm = utility_llm.bind_tools(scope_tools)
+        self.utility_llm = utility_llm
         self.playbooks = PlaybookLibrary()
         self.intent_classifier = IntentClassifier(utility_llm)
         self.hypothesizer = Hypothesizer(utility_llm)
@@ -101,10 +102,25 @@ class DiagnosisAgent:
 
     async def _explain_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
         self.logger.info("\n=== explain ===")
-        system_prompt = EXPLAIN_PROMPT.format(query=state["query"])
-        response = await self.utility_llm.ainvoke([SystemMessage(content=system_prompt)])
-        self.logger.info(f"  explanation: {self._preview(response.content)}")
-        return {"messages": [response]}
+        system_message = SystemMessage(content=EXPLAIN_PROMPT.format(query=state["query"]))
+        turn: list[Any] = []
+        for _ in range(self.MAX_EXPLAIN_ITERATIONS):
+            response = await self.scope_llm.ainvoke([system_message, *turn])
+            turn.append(response)
+            if not response.tool_calls:
+                self.logger.info(f"  explanation: {self._preview(response.content)}")
+                return {"messages": turn}
+            for call in response.tool_calls:
+                self.logger.info(f"  explain -> {call['name']}({call['args']})")
+            tool_result = await self.scope_tool_executor.ainvoke({"messages": [system_message, *turn]})
+            turn.extend(tool_result["messages"])
+        # budget hit while still calling tools — force a final answer, no more tool calls
+        final = await self.scope_llm.ainvoke(
+            [system_message, *turn, SystemMessage(content="Stop. Answer the user's question now, no tool calls.")]
+        )
+        turn.append(final)
+        self.logger.info(f"  explanation: {self._preview(final.content)}")
+        return {"messages": turn}
 
     async def _context_builder(self, state: DiagnosisAgentState) -> dict[str, Any]:
         self.logger.info("\n=== scope ===")
