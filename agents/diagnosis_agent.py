@@ -218,11 +218,9 @@ class DiagnosisAgent:
         ]
         evaluation_messages = messages + stop_messages
 
-        playbook = self.playbooks.get(state["selected_playbook_id"])
         verdict = await self.evaluator.evaluate(
             state["query"],
             state.get("current_hypothesis", ""),
-            playbook.body,
             evaluation_messages,
             state.get("hypothesis_count", 0),
             self.MAX_HYPOTHESES,

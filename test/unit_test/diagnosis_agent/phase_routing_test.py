@@ -71,12 +71,10 @@ def test_evaluate_routing_conclusive_finalizes():
 def test_evaluate_node_synthesizes_stop_messages_for_dangling_tool_calls():
     agent = _agent()
     agent.logger = MagicMock()
-    agent.playbooks = MagicMock()
-    agent.playbooks.get.return_value = MagicMock(body="playbook body")
 
     captured = {}
 
-    async def fake_evaluate(query, hypothesis, playbook_body, messages, hypothesis_count, max_hypotheses):
+    async def fake_evaluate(query, hypothesis, messages, hypothesis_count, max_hypotheses):
         captured["messages"] = messages
         verdict = MagicMock()
         verdict.verdict = "exhausted"
@@ -114,12 +112,10 @@ def test_evaluate_node_synthesizes_stop_messages_for_dangling_tool_calls():
 def test_evaluate_node_does_not_synthesize_messages_when_no_pending_calls():
     agent = _agent()
     agent.logger = MagicMock()
-    agent.playbooks = MagicMock()
-    agent.playbooks.get.return_value = MagicMock(body="playbook body")
 
     captured = {}
 
-    async def fake_evaluate(query, hypothesis, playbook_body, messages, hypothesis_count, max_hypotheses):
+    async def fake_evaluate(query, hypothesis, messages, hypothesis_count, max_hypotheses):
         captured["messages"] = messages
         verdict = MagicMock()
         verdict.verdict = "conclusive"
