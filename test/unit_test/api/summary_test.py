@@ -71,6 +71,22 @@ def test_approved_without_pr_case():
     assert "Approved, but no PR was opened." in message
 
 
+def test_missing_info_cap_exhausted_case():
+    diagnosis = _diagnosis(requires_remediation=True)
+    plan = RemediationPlan(
+        summary="Still missing the image tag after 2 rounds of questions; cannot proceed.",
+        steps=[],
+        planning_success=False,
+        missing_information="What image tag should be used?",
+    )
+
+    message = build_summary_message(diagnosis, plan, approved=None)
+
+    assert "Still missing the image tag after 2 rounds of questions; cannot proceed." in message
+    assert "Proposed fix:" not in message
+    assert "Awaiting your approval" not in message
+
+
 def test_rejected_case():
     diagnosis = _diagnosis(requires_remediation=True)
     plan = _plan()
