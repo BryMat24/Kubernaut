@@ -249,7 +249,7 @@ class DiagnosisAgent:
         if fresh_calls:
             pruned_last = last_message.model_copy(update={"tool_calls": fresh_calls})
             fresh_state = {**state, "messages": [*messages[:-1], pruned_last]}
-            fresh_result = await self._tool_executor.ainvoke(fresh_state)
+            fresh_result = await self.tool_executor.ainvoke(fresh_state)
             fresh_messages = fresh_result["messages"]
 
         repeat_messages = [

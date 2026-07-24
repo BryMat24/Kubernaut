@@ -2,11 +2,13 @@
 
 set -euo pipefail
 
+KUBERNAUT_NS="kubernaut"
 MONITORING_NS="dev-monitoring"
 APP_NS="dev"
 
 GRAFANA_SERVICE="prometheus-grafana"
 FRONTEND_SERVICE="frontend-service"
+KUBERNAUT_UI="kubernaut-ui"
 LOKI_SERVICE="loki"
 
 echo "=== Grafana Credentials ==="
@@ -29,6 +31,11 @@ trap cleanup EXIT INT TERM
 echo "Starting Grafana port-forward..."
 kubectl port-forward -n "${MONITORING_NS}" svc/"${GRAFANA_SERVICE}" 3000:80 \
     >/tmp/grafana-portforward.log 2>&1 &
+GRAFANA_PID=$!
+
+echo "Starting Kubernaut UI port-forward..."
+kubectl port-forward -n "${KUBERNAUT_NS}" svc/"${KUBERNAUT_UI}" 8001:3000 \
+    >/tmp/ui-portforward.log 2>&1 &
 GRAFANA_PID=$!
 
 echo "Starting Frontend port-forward..."
