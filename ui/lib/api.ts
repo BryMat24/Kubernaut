@@ -38,12 +38,22 @@ export interface ProgressEvent {
 }
 
 export interface DiagnoseResponse {
-  status: "pending_approval" | "complete";
+  status: "pending_approval" | "pending_info" | "complete";
   thread_id: string;
   chat_id: string;
   plan?: RemediationPlan;
+  question?: string;
   message?: string;
   result?: { diagnosis_result?: { summary: string }; pr_url?: string };
+}
+
+export interface AnswerResponse {
+  status: "pending_approval" | "pending_info" | "complete";
+  thread_id: string;
+  plan?: RemediationPlan;
+  question?: string;
+  message?: string;
+  result?: { pr_url?: string; [key: string]: unknown };
 }
 
 export interface ApproveResponse {
@@ -164,4 +174,12 @@ export function streamApprove(
   onProgress: (event: ProgressEvent) => void
 ): Promise<ApproveResponse> {
   return streamRequest<ApproveResponse>(`/approve/${threadId}`, { approved }, onProgress);
+}
+
+export function streamAnswer(
+  threadId: string,
+  answer: string,
+  onProgress: (event: ProgressEvent) => void
+): Promise<AnswerResponse> {
+  return streamRequest<AnswerResponse>(`/answer/${threadId}`, { answer }, onProgress);
 }
