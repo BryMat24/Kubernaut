@@ -31,10 +31,7 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
 
 def require_remediation_routing_node(state: OrchestratorState) -> Literal["planner_agent", "end"]:
     diagnosis_result = state["diagnosis_result"]
-    # End only on a confident diagnosis that found nothing to fix. Every other case —
-    # a confirmed issue, or an inconclusive/incomplete investigation — goes to a human;
-    # never fail-open by defaulting an uncertain result to "end".
-    if diagnosis_result.diagnosis_success and not diagnosis_result.requires_remediation:
+    if not diagnosis_result.diagnosis_success or not diagnosis_result.requires_remediation:
         return "end"
     return "planner_agent"
 
