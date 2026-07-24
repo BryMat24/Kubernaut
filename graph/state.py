@@ -29,6 +29,7 @@ class DiagnosisAgentState(MessagesState):
 
 class PlannerAgentState(MessagesState):
     diagnosis_result: DiagnosisResult  # provided by caller
+    human_provided_info: str  # optional: a human's answer to a prior missing-information question
     iteration_count: int
     plan: RemediationPlan
 

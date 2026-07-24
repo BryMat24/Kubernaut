@@ -76,7 +76,10 @@ class PlannerAgent:
         root_cause_line = f"\nroot_cause: {diagnosis_result.root_cause}" if diagnosis_result.root_cause else ""
         issue_text = f"summary: {diagnosis_result.summary}{root_cause_line}"
 
-        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ndiagnosed issue:\n{issue_text}"
+        human_info = state.get("human_provided_info")
+        human_info_line = f"\n\nAdditional information supplied by a human:\n{human_info}" if human_info else ""
+
+        system_prompt = f"{self.SYSTEM_PROMPT}\n\nworking_directory: {state['repo_path']}\n\ndiagnosed issue:\n{issue_text}{human_info_line}"
 
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = self.llm.invoke(messages)
