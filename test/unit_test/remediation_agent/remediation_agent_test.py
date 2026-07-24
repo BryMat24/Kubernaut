@@ -76,11 +76,10 @@ def _make_agent():
 
 
 # ------------------------------------------------------------------
-# _steps_completed_from_files — the mechanical, per-step content check
+# _steps_completed_from_files — "was this step's file touched", not a content check
 # ------------------------------------------------------------------
 
-def test_steps_completed_requires_file_to_be_in_changed_set(tmp_path):
-    (tmp_path / "deployment.yaml").write_text("resources:\n    limits:\n        memory: 256Mi\n")
+def test_steps_completed_requires_file_to_be_in_changed_set():
     plan = RemediationPlan(
         summary="s",
         steps=[
@@ -94,15 +93,14 @@ def test_steps_completed_requires_file_to_be_in_changed_set(tmp_path):
         planning_success=True,
     )
 
-    # Content matches on disk, but the file isn't in the changed set (e.g. it already
-    # looked like this before any edit) -- must not be reported as completed.
-    result = RemediationAgent._steps_completed_from_files(str(tmp_path), [], plan)
+    result = RemediationAgent._steps_completed_from_files([], plan)
 
     assert result == []
 
 
-def test_steps_completed_distinguishes_two_steps_sharing_the_same_file(tmp_path):
-    (tmp_path / "deployment.yaml").write_text("resources:\n    limits:\n        memory: 256Mi\n")
+def test_steps_completed_marks_all_steps_sharing_a_touched_file():
+    # Completion is tracked per-file, not per-step-content -- both steps targeting the same
+    # file are reported together once that file shows up as changed.
     plan = RemediationPlan(
         summary="Add memory limits and fix image tag",
         steps=[
@@ -122,24 +120,33 @@ def test_steps_completed_distinguishes_two_steps_sharing_the_same_file(tmp_path)
         planning_success=True,
     )
 
-    result = RemediationAgent._steps_completed_from_files(str(tmp_path), ["deployment.yaml"], plan)
+    result = RemediationAgent._steps_completed_from_files(["deployment.yaml"], plan)
 
-    assert result == [1]
+    assert result == [1, 2]
 
 
-def test_steps_completed_empty_new_content_is_never_trivially_matched(tmp_path):
-    (tmp_path / "deployment.yaml").write_text("anything at all\n")
+def test_steps_completed_marks_deletion_steps_complete_once_file_touched():
+    # Regression test: a deletion-type fix (e.g. "remove this invalid command block") has no
+    # positive new text that should now be present in the file -- new_content here describes
+    # what's being REMOVED, mirroring a real plan that caused an infinite remediation loop
+    # (the file was correctly fixed but never registered as complete, so the agent kept
+    # re-attempting the same edit until it hit MAX_ITERATIONS). Touching the file is enough.
     plan = RemediationPlan(
-        summary="s",
+        summary="Remove the invalid command from the cache deployment",
         steps=[
-            RemediationStep(step_number=1, file_path="deployment.yaml", description="d", new_content="   "),
+            RemediationStep(
+                step_number=1,
+                file_path="app/cache/base/deployment.yaml",
+                description="Delete the invalid command block",
+                new_content="command:\n    - /does-not-exist",
+            ),
         ],
         planning_success=True,
     )
 
-    result = RemediationAgent._steps_completed_from_files(str(tmp_path), ["deployment.yaml"], plan)
+    result = RemediationAgent._steps_completed_from_files(["app/cache/base/deployment.yaml"], plan)
 
-    assert result == []
+    assert result == [1]
 
 
 # ------------------------------------------------------------------

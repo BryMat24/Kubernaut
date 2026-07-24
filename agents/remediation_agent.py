@@ -95,7 +95,7 @@ class RemediationAgent:
             completed: set[int] = set()
         else:
             files = get_changed_files(state["repo_path"])
-            completed = set(self._steps_completed_from_files(state["repo_path"], files, plan))
+            completed = set(self._steps_completed_from_files(files, plan))
         remaining = [s.step_number for s in plan.steps if s.step_number not in completed]
         progress = f"\n\nSteps completed: {sorted(completed)}. Steps remaining: {remaining}." if plan.steps else ""
 
@@ -124,7 +124,7 @@ class RemediationAgent:
     
     def _evaluation_node(self, state: RemediationAgentState) -> dict[str, Any]:
         files = get_changed_files(state["repo_path"])
-        completed_steps = self._steps_completed_from_files(state["repo_path"], files, state["plan"])
+        completed_steps = self._steps_completed_from_files(files, state["plan"])
 
         if not files:
             return { "eval_passed": True, "completed_steps": completed_steps }
@@ -192,23 +192,16 @@ class RemediationAgent:
             return {"messages": [AIMessage(content=f"Failed to open PR: {e}")]}
 
     @staticmethod
-    def _steps_completed_from_files(repo_path: str, files: list[str], plan: RemediationPlan) -> list[int]:
+    def _steps_completed_from_files(files: list[str], plan: RemediationPlan) -> list[int]:
+        # Deliberately just "was this step's file touched at all" -- not a content match.
+        # A step's new_content describes what changed, which for a deletion (e.g. "remove
+        # this invalid command block") has no positive text that should now be present in
+        # the file, so a content-substring check can never mark a deletion step complete even
+        # when it was applied correctly. This is only a progress hint to stop the reasoning
+        # LLM from re-editing files it already touched -- actual correctness is judged by
+        # evaluation_node's diff-based LLM judge, not here.
         changed = set(files)
-        completed: list[int] = []
-        file_cache: dict[str, str] = {}
-        for step in plan.steps:
-            if step.file_path not in changed:
-                continue
-            if step.file_path not in file_cache:
-                try:
-                    with open(os.path.join(repo_path, step.file_path), "r", encoding="utf-8") as f:
-                        file_cache[step.file_path] = f.read()
-                except OSError:
-                    file_cache[step.file_path] = ""
-            target = step.new_content.strip()
-            if target and target in file_cache[step.file_path]:
-                completed.append(step.step_number)
-        return completed
+        return [step.step_number for step in plan.steps if step.file_path in changed]
 
     @staticmethod
     def _task_description(plan: RemediationPlan) -> str:
