@@ -193,13 +193,6 @@ class RemediationAgent:
 
     @staticmethod
     def _steps_completed_from_files(files: list[str], plan: RemediationPlan) -> list[int]:
-        # Deliberately just "was this step's file touched at all" -- not a content match.
-        # A step's new_content describes what changed, which for a deletion (e.g. "remove
-        # this invalid command block") has no positive text that should now be present in
-        # the file, so a content-substring check can never mark a deletion step complete even
-        # when it was applied correctly. This is only a progress hint to stop the reasoning
-        # LLM from re-editing files it already touched -- actual correctness is judged by
-        # evaluation_node's diff-based LLM judge, not here.
         changed = set(files)
         return [step.step_number for step in plan.steps if step.file_path in changed]
 

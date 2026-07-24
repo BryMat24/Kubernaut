@@ -31,7 +31,7 @@ diagnosis_llm = create_llm_model("openai/gpt-5.4-mini")
 planner_llm = create_llm_model("openai/gpt-5.4-mini")
 
 # remediation agent
-remediation_llm = create_llm_model("qwen/qwen3-coder-next")
+remediation_llm = create_llm_model("openai/gpt-5.4-mini")
 judge_llm = create_llm_model("openai/gpt-5.4-mini")
 
 # multi use across agents
@@ -39,8 +39,6 @@ utility_llm = create_llm_model("openai/gpt-5.4-nano")
 
 
 load_dotenv()
-
-
 
 
 async def init_diagnosis_agent() -> DiagnosisAgent:

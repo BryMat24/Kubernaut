@@ -55,6 +55,7 @@ echo "======================================"
 echo "Grafana : http://localhost:3000"
 echo "Frontend: http://localhost:8000"
 echo "Loki    : http://localhost:3100"
+echo "Kubernaut : http://localhost:8001"
 echo "======================================"
 echo
 echo "Press Ctrl+C to stop."
