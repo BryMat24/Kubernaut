@@ -106,7 +106,6 @@ class DiagnosisAgent:
             turn.append(response)
             if not response.tool_calls:
                 return {"messages": turn}
-
             tool_result = await self.scope_tool_executor.ainvoke({"messages": [system_message, *turn]})
             turn.extend(tool_result["messages"])
         final = await self.llm.ainvoke(
@@ -124,34 +123,26 @@ class DiagnosisAgent:
             if not response.tool_calls:
                 summary = str(response.content)
                 break
-            for call in response.tool_calls:
-                self.logger.info(f"  scope -> {call['name']}({call['args']})")
             tool_result = await self.scope_tool_executor.ainvoke({"messages": messages})
             messages.extend(tool_result["messages"])
         else:
-            # budget hit while still calling tools — summarize what we have
             final = await self.scope_llm.ainvoke(
                 messages + [SystemMessage(content="Stop. Reply with the concise scene summary now, no tool calls.")]
             )
             summary = str(final.content)
-        self.logger.info(f"  scope_summary: {self._preview(summary)}")
+
         return {
-            "scope_summary": summary,
-            "hypothesis_count": 0,
-            "investigate_iterations": 0,
-            "ruled_out": [],
+            "scope_summary": summary
         }
 
     async def _hypothesize_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
         count = state.get("hypothesis_count", 0) + 1
-        self.logger.info(f"\n=== hypothesize (attempt {count}/{self.MAX_HYPOTHESES}) ===")
         selection = await self.hypothesizer.select(
             state["query"],
             state.get("scope_summary", ""),
             self.playbooks.list_triggers(),
             state.get("ruled_out", []),
         )
-        self.logger.info(f"  hypothesis: {self._preview(selection.hypothesis)} (playbook={selection.playbook_id})")
         return {
             "current_hypothesis": selection.hypothesis,
             "selected_playbook_id": selection.playbook_id,
@@ -161,7 +152,6 @@ class DiagnosisAgent:
 
     async def _investigate_node(self, state: DiagnosisAgentState) -> dict[str, Any]:
         iteration = state.get("investigate_iterations", 0) + 1
-        self.logger.info(f"\n=== investigate {iteration}/{self.MAX_INVESTIGATE_ITERATIONS} ===")
         playbook = self.playbooks.get(state["selected_playbook_id"])
         ruled_out = "\n".join(
             f"- {r['hypothesis']}: {r['why_ruled_out']}" for r in state.get("ruled_out", [])

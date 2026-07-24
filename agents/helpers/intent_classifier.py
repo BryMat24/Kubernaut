@@ -14,16 +14,15 @@ class IntentClassifier:
             - diagnose: the user is reporting or asking about a problem/incident (something is
               broken, erroring, slow, not scaling, pending, etc.) and expects a live
               investigation of the actual cluster to find a root cause.
-            - explain: an informational or conceptual question (e.g. "what does an HPA do",
-              "how does this agent decide what to investigate", "what is a NetworkPolicy") that
-              can be answered directly from general knowledge, with no cluster investigation
-              needed.
+            - explain: an informational such as asking about cluster state ("how many pods in dev namespace", "how many namespaces are there")
+              or conceptual question (e.g. "what does an HPA do",
+              "how does this agent decide what to investigate")
 
             user query:
             {query}
 
             Respond with structured output: intent and reasoning. If genuinely ambiguous,
-            prefer 'diagnose' -- treating an explain question as diagnose only costs a bit of
+            prefer 'diagnose', treating an explain question as diagnose only costs a bit of
             extra investigation, while treating a real incident as explain would skip
             investigating it entirely.
         """

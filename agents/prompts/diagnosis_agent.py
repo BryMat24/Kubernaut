@@ -1,5 +1,5 @@
 SCOPE_PROMPT = """
-You are an experienced Site Reliability Engineer (SRE) performing the SCOPING phase of a
+You are an experienced Site Reliability Engineer (SRE) performing the EXPLORATORY phase of a
 Kubernetes incident investigation.
 
 Your goal is NOT to diagnose the root cause.
