@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, get_db_session, init_models
 from api.orm import Chat, Message, MessageRole
-from api.schemas import ApprovalDecision, ChatCreateRequest, DiagnoseRequest
+from api.schemas import ApprovalDecision, ChatCreateRequest, DiagnoseRequest, MissingInfoAnswer
 from api.summary import build_summary_message
 from graph.builder import build_graph
 from models import DiagnosisResult, RemediationPlan
@@ -57,6 +57,20 @@ def _json_default(obj):
 
 def _sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, default=_json_default)}\n\n"
+
+
+def _interrupt_response(payload: dict) -> tuple[str, str, dict]:
+    """Given an interrupt() payload (Task 3's "type"-tagged shape), return
+    (status, message_for_chat_history, extra_sse_fields)."""
+    if payload.get("type") == "missing_information":
+        question = payload["question"]
+        message = f"I need more information to build a safe plan: {question}"
+        return "pending_info", message, {"question": question}
+
+    diagnosis = payload["diagnosis"]
+    plan = payload["plan"]
+    message = build_summary_message(diagnosis, plan, approved=None)
+    return "pending_approval", message, {"plan": plan}
 
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -113,17 +127,15 @@ async def start_diagnosis(body: DiagnoseRequest, db: AsyncSession = Depends(get_
         async with AsyncSessionLocal() as gen_db:
             if "__interrupt__" in final_values:
                 interrupt_payload = final_values["__interrupt__"][0].value
-                diagnosis = interrupt_payload["diagnosis"]
-                plan = interrupt_payload["plan"]
-                summary = build_summary_message(diagnosis, plan, approved=None)
+                status, summary, extra = _interrupt_response(interrupt_payload)
                 gen_db.add(Message(chat_id=chat_id, role=MessageRole.ASSISTANT, content=summary, thread_id=thread_id))
                 await gen_db.commit()
                 yield _sse_event({
                     "type": "final",
-                    "status": "pending_approval",
+                    "status": status,
                     "thread_id": thread_id,
                     "chat_id": str(chat_id),
-                    "plan": plan,
+                    **extra,
                 })
                 return
 
@@ -201,6 +213,78 @@ async def approve(thread_id: str, decision: ApprovalDecision, db: AsyncSession =
             pr_url = final_values.get("pr_url")
             if diagnosis is not None:
                 message_text = build_summary_message(diagnosis, plan, approved=approved, pr_url=pr_url)
+                async with AsyncSessionLocal() as gen_db:
+                    msg = await gen_db.get(Message, pending_message_id)
+                    if msg is not None:
+                        msg.content = message_text
+                        await gen_db.commit()
+
+        yield _sse_event({
+            "type": "final",
+            "status": "complete",
+            "thread_id": thread_id,
+            "result": final_values,
+            "message": message_text,
+        })
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@app.post("/answer/{thread_id}")
+async def answer_missing_info(thread_id: str, body: MissingInfoAnswer, db: AsyncSession = Depends(get_db_session)):
+    config = {"configurable": {"thread_id": thread_id}}
+    graph = app.state.graph
+
+    state = await graph.aget_state(config)
+    if not state.values:
+        raise HTTPException(status_code=404, detail=f"unknown thread_id: {thread_id}")
+
+    pending_message = (
+        await db.execute(
+            select(Message).where(Message.thread_id == thread_id).order_by(Message.created_at.desc())
+        )
+    ).scalars().first()
+    pending_message_id = pending_message.id if pending_message else None
+
+    async def event_generator():
+        final_values: dict = {}
+        try:
+            async for mode, chunk in graph.astream(
+                Command(resume={"answer": body.answer}),
+                config=config,
+                stream_mode=["custom", "values"],
+            ):
+                if mode == "custom":
+                    yield _sse_event({"type": "progress", **chunk})
+                else:
+                    final_values = chunk
+        except Exception as exc:
+            yield _sse_event({"type": "error", "message": str(exc)})
+            return
+
+        if "__interrupt__" in final_values:
+            interrupt_payload = final_values["__interrupt__"][0].value
+            status, summary, extra = _interrupt_response(interrupt_payload)
+            if pending_message_id is not None:
+                async with AsyncSessionLocal() as gen_db:
+                    msg = await gen_db.get(Message, pending_message_id)
+                    if msg is not None:
+                        msg.content = summary
+                        await gen_db.commit()
+            yield _sse_event({
+                "type": "final",
+                "status": status,
+                "thread_id": thread_id,
+                **extra,
+            })
+            return
+
+        message_text = None
+        if pending_message_id is not None:
+            diagnosis = final_values.get("diagnosis_result")
+            plan = final_values.get("plan")
+            if diagnosis is not None:
+                message_text = build_summary_message(diagnosis, plan, approved=None)
                 async with AsyncSessionLocal() as gen_db:
                     msg = await gen_db.get(Message, pending_message_id)
                     if msg is not None:

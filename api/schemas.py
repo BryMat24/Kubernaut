@@ -18,3 +18,7 @@ class DiagnoseRequest(BaseModel):
 class ApprovalDecision(BaseModel):
     approved: bool
     edited_plan: RemediationPlan | None = None
+
+
+class MissingInfoAnswer(BaseModel):
+    answer: str
