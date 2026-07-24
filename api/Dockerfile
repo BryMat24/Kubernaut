@@ -34,9 +34,9 @@ COPY models/ ./models/
 COPY mcp_clients/ ./mcp_clients/
 COPY tools/ ./tools/
 COPY utils/ ./utils/
-# DiagnosisAgent's PlaybookLibrary loads playbooks/*.md at construction time
-# (agent startup, not lazily) — without this the API container crashes on boot.
-COPY playbooks/ ./playbooks/
+# agents/playbooks/*.md is nested under agents/, so the COPY agents/ line above
+# already includes it — DiagnosisAgent's PlaybookLibrary loads these at
+# construction time (agent startup, not lazily), so this must not be dropped.
 
 # Required at runtime, not baked into the image:
 #   OPENROUTER_API_KEY                          - OpenRouter API key, all LLM calls

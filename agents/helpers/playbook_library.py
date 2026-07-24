@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 import yaml
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PLAYBOOKS_DIR = os.path.join(_REPO_ROOT, "playbooks")
+_AGENTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PLAYBOOKS_DIR = os.path.join(_AGENTS_DIR, "playbooks")
 
 
 @dataclass
