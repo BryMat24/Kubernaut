@@ -17,3 +17,6 @@ docs
 *.md
 plan.md
 PLAN.md
+# DiagnosisAgent's PlaybookLibrary loads these at agent construction time
+# (api container startup) — must survive the *.md exclusion above.
+!playbooks/*.md
