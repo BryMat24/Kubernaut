@@ -1,4 +1,5 @@
-from typing import TypedDict
+import operator
+from typing import Annotated, TypedDict
 
 from langgraph.graph import MessagesState
 from models import DiagnosisResult, RemediationPlan
@@ -12,7 +13,7 @@ class OrchestratorState(TypedDict):
     pr_url: str
     eval_passed: bool
     eval_reasoning: str
-    human_provided_info: str
+    human_provided_info: Annotated[list[str], operator.add]
     missing_info_rounds: int
 
 class DiagnosisAgentState(MessagesState):

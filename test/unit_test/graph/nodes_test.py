@@ -1,3 +1,4 @@
+import operator
 from unittest.mock import patch
 
 from graph.nodes import (
@@ -5,6 +6,7 @@ from graph.nodes import (
     missing_info_node,
     planning_outcome_routing,
 )
+from graph.state import OrchestratorState
 from models import DiagnosisResult, RemediationPlan
 
 
@@ -68,7 +70,7 @@ def test_missing_info_node_interrupts_with_the_question_and_records_the_answer()
         "diagnosis": diagnosis,
         "plan": plan,
     })
-    assert result == {"human_provided_info": "v3", "missing_info_rounds": 1}
+    assert result == {"human_provided_info": ["v3"], "missing_info_rounds": 1}
 
 
 def test_missing_info_node_increments_rounds_from_existing_state():
@@ -81,3 +83,37 @@ def test_missing_info_node_increments_rounds_from_existing_state():
         result = missing_info_node(state)
 
     assert result["missing_info_rounds"] == 2
+
+
+def test_missing_info_node_answers_accumulate_across_rounds_via_reducer():
+    """human_provided_info is Annotated[list[str], operator.add] on OrchestratorState, so
+    LangGraph merges successive missing_info_node returns by appending rather than replacing.
+    Simulate two rounds' worth of node returns and apply the same reducer LangGraph would use,
+    to prove round 1's answer survives into round 2 instead of being overwritten."""
+    reducer = OrchestratorState.__annotations__["human_provided_info"].__metadata__[0]
+    assert reducer is operator.add
+
+    plan_round_1 = RemediationPlan(
+        summary="s", steps=[], planning_success=False, missing_information="What namespace?",
+    )
+    state = {"plan": plan_round_1, "diagnosis_result": _diagnosis(), "missing_info_rounds": 0}
+    with patch("graph.nodes.interrupt", return_value={"answer": "prod"}):
+        round_1_result = missing_info_node(state)
+
+    accumulated = reducer(state.get("human_provided_info", []), round_1_result["human_provided_info"])
+    assert accumulated == ["prod"]
+
+    plan_round_2 = RemediationPlan(
+        summary="s", steps=[], planning_success=False, missing_information="What image tag?",
+    )
+    state = {
+        "plan": plan_round_2,
+        "diagnosis_result": _diagnosis(),
+        "missing_info_rounds": round_1_result["missing_info_rounds"],
+        "human_provided_info": accumulated,
+    }
+    with patch("graph.nodes.interrupt", return_value={"answer": "v3"}):
+        round_2_result = missing_info_node(state)
+
+    accumulated = reducer(state["human_provided_info"], round_2_result["human_provided_info"])
+    assert accumulated == ["prod", "v3"]

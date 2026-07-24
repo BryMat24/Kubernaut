@@ -58,7 +58,7 @@ def missing_info_node(state: OrchestratorState) -> dict:
         "plan": plan,
     })
     return {
-        "human_provided_info": answer_payload.get("answer", ""),
+        "human_provided_info": [answer_payload.get("answer", "")],
         "missing_info_rounds": rounds,
     }
 
@@ -70,7 +70,7 @@ def make_planner_node(planner_agent: PlannerAgent):
         result = await planner_agent.ainvoke({
             "messages": [],
             "diagnosis_result": state["diagnosis_result"],
-            "human_provided_info": state.get("human_provided_info", ""),
+            "human_provided_info": "\n".join(state.get("human_provided_info", [])),
             "iteration_count": 0,
             "repo_url": state["repo_url"],
             "bare_path": "",
