@@ -197,7 +197,7 @@ export default function ChatView({ chatId }: ChatViewProps) {
             />
           ) : (
             <MissingInfoCard
-              key={item.id}
+              key={`${item.id}-${item.question}`}
               threadId={item.threadId}
               question={item.question}
               onResolved={(outcome) => replaceItem(item.id, outcome)}
