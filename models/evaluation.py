@@ -6,8 +6,11 @@ from pydantic import BaseModel, Field
 class EvaluationVerdict(BaseModel):
     verdict: Literal["conclusive", "reformulate", "exhausted"] = Field(
         description=(
-            "conclusive = the evidence supports a confident root cause; "
-            "reformulate = the current hypothesis was ruled out but a different one is worth trying; "
+            "conclusive = the evidence supports a confident root cause -- either confirming the "
+            "current hypothesis, or a different specific mechanism the investigation found "
+            "concrete evidence for while ruling the current hypothesis out; "
+            "reformulate = the current hypothesis was ruled out and no confident alternative "
+            "conclusion was reached -- a different hypothesis is worth trying next; "
             "exhausted = no confident conclusion and no new hypothesis worth pursuing."
         )
     )
