@@ -43,6 +43,11 @@ def open_pull_request(
     body: str,
     base: str = "main",
 ) -> str:
+    # `gh` reads GH_TOKEN directly and needs no setup of its own, but plain `git push`
+    # has no concept of GH_TOKEN -- without this, push fails with "could not read
+    # Username for 'https://github.com'" even though GH_TOKEN is set, since nothing
+    # ever wired it into git's own credential lookup. Idempotent, safe to call every time.
+    run(["gh", "auth", "setup-git"], repo)
     run(["git", "add", "-A"], repo)
     run(["git", "commit", "-m", commit_message], repo)
     run(["git", "push", "-u", "origin", branch], repo)

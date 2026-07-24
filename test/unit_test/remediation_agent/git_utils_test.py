@@ -1,7 +1,8 @@
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
-from utils.git_utils import ensure_base_clone
+from utils.git_utils import ensure_base_clone, open_pull_request
 
 
 def _make_origin_repo(path: Path) -> str:
@@ -51,3 +52,16 @@ def test_ensure_base_clone_recovers_from_corrupted_cache(tmp_path: Path, monkeyp
 
     assert recovered_path == bare_path
     subprocess.run(["git", "rev-parse", "--git-dir"], cwd=recovered_path, check=True, capture_output=True)
+
+
+def test_open_pull_request_sets_up_gh_auth_before_pushing():
+    with patch("utils.git_utils.run", return_value="") as mock_run:
+        open_pull_request("/repo", "branch", "commit msg", "title", "body")
+
+    commands = [call.args[0] for call in mock_run.call_args_list]
+    # gh auth setup-git must run before git push -- without it, a raw `git push` has no
+    # way to authenticate even when GH_TOKEN is set (only `gh` itself reads that var
+    # directly), and fails with "could not read Username for 'https://github.com'".
+    assert commands[0] == ["gh", "auth", "setup-git"]
+    assert ["git", "push", "-u", "origin", "branch"] in commands
+    assert commands.index(["gh", "auth", "setup-git"]) < commands.index(["git", "push", "-u", "origin", "branch"])
