@@ -5,6 +5,7 @@ from graph.nodes import (
     MAX_MISSING_INFO_ROUNDS,
     missing_info_node,
     planning_outcome_routing,
+    require_remediation_routing_node,
 )
 from graph.state import OrchestratorState
 from models import DiagnosisResult, RemediationPlan
@@ -16,6 +17,24 @@ def _diagnosis():
         root_cause="Invalid image tag",
         diagnosis_success=True,
     )
+
+
+def test_require_remediation_routing_node_ends_when_diagnosis_unsuccessful():
+    diagnosis = DiagnosisResult(summary="Inconclusive", diagnosis_success=False)
+    assert require_remediation_routing_node({"diagnosis_result": diagnosis}) == "end"
+
+
+def test_require_remediation_routing_node_ends_when_explain_intent():
+    # requires_remediation defaults to True on the model, but DiagnosisAgent's finalize_node
+    # deterministically sets it False for explain-mode results -- routing must honor that even
+    # though diagnosis_success is True (an explain answer can be "successful" on its own terms).
+    diagnosis = DiagnosisResult(summary="An HPA scales replicas based on observed metrics.", diagnosis_success=True, requires_remediation=False)
+    assert require_remediation_routing_node({"diagnosis_result": diagnosis}) == "end"
+
+
+def test_require_remediation_routing_node_goes_to_planner_when_diagnosed_and_remediable():
+    diagnosis = DiagnosisResult(summary="Pod crashlooping", diagnosis_success=True, requires_remediation=True)
+    assert require_remediation_routing_node({"diagnosis_result": diagnosis}) == "planner_agent"
 
 
 def test_planning_outcome_routing_goes_to_missing_info_when_set():

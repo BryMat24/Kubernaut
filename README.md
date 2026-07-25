@@ -38,7 +38,7 @@ flowchart TB
             EXPLAIN --> DIAG_FIN
         end
 
-        DIAG_FIN --> ROUTE{require_remediation_routing_node:<br/>diagnosis_success?}
+        DIAG_FIN --> ROUTE{require_remediation_routing_node:<br/>diagnosis_success AND requires_remediation?}
         ROUTE -->|no| DONE1([Report diagnosis to user])
         ROUTE -->|yes| PLAN_LOOP
 
@@ -105,9 +105,11 @@ flowchart TB
    to try a new hypothesis (bounded) if the finding isn't confident yet. Either path ends at
    `finalize_node`, which produces a structured `DiagnosisResult` (summary, root cause, and
    whether the investigation itself was confident/complete).
-3. The orchestrator routes on `diagnosis_success` alone: an inconclusive diagnosis reports back
-   to the user and stops. A confident diagnosis always proceeds to planning — whether the finding
-   is actually fixable via a manifest change is now `PlannerAgent`'s call, not a pre-gate here.
+3. The orchestrator routes on `diagnosis_success` and `requires_remediation`: an inconclusive
+   diagnosis, or an "explain" intent (`requires_remediation` is set deterministically to `False`
+   for explain-mode results, never left to the LLM), reports back to the user and stops. Any
+   other confident diagnosis proceeds to planning — whether the finding is actually fixable via a
+   manifest change from there is `PlannerAgent`'s call, not a further pre-gate here.
 4. **`PlannerAgent`** clones the GitOps repo into its own isolated, read-only git worktree
    (`plan/...` branch) and investigates which file(s) need to change, then hands its findings to
    `PlanClassifier`, producing a structured `RemediationPlan` — an ordered, file-by-file list of

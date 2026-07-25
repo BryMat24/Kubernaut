@@ -33,7 +33,7 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
 
 def require_remediation_routing_node(state: OrchestratorState) -> Literal["planner_agent", "end"]:
     diagnosis_result = state["diagnosis_result"]
-    if not diagnosis_result.diagnosis_success:
+    if not diagnosis_result.diagnosis_success or not diagnosis_result.requires_remediation:
         return "end"
     return "planner_agent"
 

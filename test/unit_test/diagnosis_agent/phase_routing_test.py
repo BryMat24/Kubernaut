@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from agents.diagnosis_agent import DiagnosisAgent
+from models import DiagnosisResult
 
 
 def _agent():
@@ -202,3 +203,31 @@ def test_explain_node_forces_final_answer_when_budget_exhausted():
     assert result["messages"][-1] is forced_final
     assert agent.llm.ainvoke.call_count == 3
     assert agent.scope_tool_executor.ainvoke.call_count == 2
+
+
+def test_finalize_node_sets_requires_remediation_false_for_explain_intent():
+    # Regression test: requires_remediation must be decided by code from detected_intent, not
+    # left to the classifier LLM -- otherwise an "explain" answer that happens to look complete
+    # (diagnosis_success=True) would incorrectly route on to PlannerAgent, which would then try
+    # to plan a GitOps fix for a question that was never a real diagnosis.
+    agent = _agent()
+    agent.classifier = MagicMock()
+    agent.classifier.classify = AsyncMock(
+        return_value=DiagnosisResult(summary="An HPA scales replicas based on observed metrics.", diagnosis_success=True)
+    )
+
+    result = asyncio.run(agent._finalize_node({"query": "q", "messages": [], "detected_intent": "explain"}))
+
+    assert result["diagnosis_result"].requires_remediation is False
+
+
+def test_finalize_node_sets_requires_remediation_true_for_diagnose_intent():
+    agent = _agent()
+    agent.classifier = MagicMock()
+    agent.classifier.classify = AsyncMock(
+        return_value=DiagnosisResult(summary="Pod crashlooping due to OOM.", diagnosis_success=True)
+    )
+
+    result = asyncio.run(agent._finalize_node({"query": "q", "messages": [], "detected_intent": "diagnose"}))
+
+    assert result["diagnosis_result"].requires_remediation is True

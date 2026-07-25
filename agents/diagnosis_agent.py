@@ -260,6 +260,7 @@ class DiagnosisAgent:
                 )
             }
         parsed = await self.classifier.classify(state["query"], state["messages"])
+        parsed = parsed.model_copy(update={"requires_remediation": state.get("detected_intent") != "explain"})
         return {"diagnosis_result": parsed}
 
     def invoke(self, state: DiagnosisAgentState):
