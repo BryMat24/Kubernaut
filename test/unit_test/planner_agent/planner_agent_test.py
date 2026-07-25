@@ -20,7 +20,6 @@ def test_reasoning_node_includes_human_provided_info_when_present():
     diagnosis = DiagnosisResult(
         summary="Image pull failure on cache-deployment",
         root_cause="Invalid image tag",
-        requires_remediation=True,
         diagnosis_success=True,
     )
     state = {
@@ -44,7 +43,6 @@ def test_reasoning_node_omits_human_provided_info_section_when_absent():
     diagnosis = DiagnosisResult(
         summary="Image pull failure on cache-deployment",
         root_cause=None,
-        requires_remediation=True,
         diagnosis_success=True,
     )
     state = {

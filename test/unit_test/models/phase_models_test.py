@@ -21,7 +21,6 @@ def test_evaluation_verdict_rejects_unknown_verdict():
 
 def test_evaluation_verdict_optional_fields_default_none():
     e = EvaluationVerdict(verdict="exhausted", reasoning="no lead")
-    assert e.requires_remediation is None
     assert e.next_hypothesis is None
     assert e.why_ruled_out is None
 

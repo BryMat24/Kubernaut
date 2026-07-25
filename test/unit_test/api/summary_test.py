@@ -2,11 +2,10 @@ from api.summary import build_summary_message
 from models import DiagnosisResult, RemediationPlan, RemediationStep
 
 
-def _diagnosis(requires_remediation=False, root_cause=None):
+def _diagnosis(root_cause=None):
     return DiagnosisResult(
         summary="Investigated the dev namespace and found 3 deployments running normally.",
         root_cause=root_cause,
-        requires_remediation=requires_remediation,
         diagnosis_success=True,
     )
 
@@ -35,7 +34,7 @@ def test_no_remediation_case():
 
 
 def test_includes_root_cause_when_present():
-    diagnosis = _diagnosis(requires_remediation=True, root_cause="Missing CPU request causes HPA to stall")
+    diagnosis = _diagnosis(root_cause="Missing CPU request causes HPA to stall")
 
     message = build_summary_message(diagnosis)
 
@@ -43,7 +42,7 @@ def test_includes_root_cause_when_present():
 
 
 def test_pending_approval_case():
-    diagnosis = _diagnosis(requires_remediation=True)
+    diagnosis = _diagnosis()
     plan = _plan()
 
     message = build_summary_message(diagnosis, plan, approved=None)
@@ -53,7 +52,7 @@ def test_pending_approval_case():
 
 
 def test_approved_with_pr_case():
-    diagnosis = _diagnosis(requires_remediation=True)
+    diagnosis = _diagnosis()
     plan = _plan()
 
     message = build_summary_message(diagnosis, plan, approved=True, pr_url="https://github.com/org/repo/pull/1")
@@ -63,7 +62,7 @@ def test_approved_with_pr_case():
 
 
 def test_approved_without_pr_case():
-    diagnosis = _diagnosis(requires_remediation=True)
+    diagnosis = _diagnosis()
     plan = _plan()
 
     message = build_summary_message(diagnosis, plan, approved=True, pr_url=None)
@@ -72,7 +71,7 @@ def test_approved_without_pr_case():
 
 
 def test_missing_info_cap_exhausted_case():
-    diagnosis = _diagnosis(requires_remediation=True)
+    diagnosis = _diagnosis()
     plan = RemediationPlan(
         summary="Still missing the image tag after 2 rounds of questions; cannot proceed.",
         steps=[],
@@ -88,7 +87,7 @@ def test_missing_info_cap_exhausted_case():
 
 
 def test_rejected_case():
-    diagnosis = _diagnosis(requires_remediation=True)
+    diagnosis = _diagnosis()
     plan = _plan()
 
     message = build_summary_message(diagnosis, plan, approved=False)

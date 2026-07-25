@@ -15,14 +15,6 @@ class EvaluationVerdict(BaseModel):
         )
     )
     reasoning: str = Field(description="Brief justification for the verdict.")
-    requires_remediation: bool | None = Field(
-        default=None,
-        description=(
-            "Set only when verdict is 'conclusive'. True if the root cause is fixable via a "
-            "Kubernetes config/manifest change; False if it is an application-level bug or an "
-            "informational finding with nothing to fix."
-        ),
-    )
     next_hypothesis: str | None = Field(
         default=None, description="Set only when verdict is 'reformulate': the next hypothesis to investigate."
     )

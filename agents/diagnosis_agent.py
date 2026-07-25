@@ -10,8 +10,8 @@ from langgraph.prebuilt import ToolNode
 
 from models import DiagnosisResult
 from .helpers import (
-    Classifier,
     DiagnosisEvaluator,
+    DiagnosisSummarizer,
     HistoryCompactor,
     Hypothesizer,
     IntentClassifier,
@@ -47,7 +47,7 @@ class DiagnosisAgent:
         self.intent_classifier = IntentClassifier(utility_llm)
         self.hypothesizer = Hypothesizer(utility_llm)
         self.evaluator = DiagnosisEvaluator(utility_llm)
-        self.classifier = Classifier(utility_llm)
+        self.classifier = DiagnosisSummarizer(utility_llm)
         self.history_compactor = HistoryCompactor(utility_llm)
         self.graph = self._build_graph()
 
@@ -227,7 +227,6 @@ class DiagnosisAgent:
         )
         update: dict[str, Any] = {
             "last_verdict": verdict.verdict,
-            "requires_remediation_hint": verdict.requires_remediation,
         }
         if stop_messages:
             update["messages"] = stop_messages
@@ -257,14 +256,10 @@ class DiagnosisAgent:
                         "rather than risking a false negative."
                     ),
                     root_cause=None,
-                    requires_remediation=True,
                     diagnosis_success=False,
                 )
             }
         parsed = await self.classifier.classify(state["query"], state["messages"])
-        hint = state.get("requires_remediation_hint")
-        if hint is not None and parsed.diagnosis_success:
-            parsed = parsed.model_copy(update={"requires_remediation": hint})
         return {"diagnosis_result": parsed}
 
     def invoke(self, state: DiagnosisAgentState):

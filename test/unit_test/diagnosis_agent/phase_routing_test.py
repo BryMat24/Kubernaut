@@ -79,7 +79,6 @@ def test_evaluate_node_synthesizes_stop_messages_for_dangling_tool_calls():
         verdict = MagicMock()
         verdict.verdict = "exhausted"
         verdict.reasoning = "budget exhausted"
-        verdict.requires_remediation = None
         verdict.why_ruled_out = None
         return verdict
 
@@ -120,7 +119,6 @@ def test_evaluate_node_does_not_synthesize_messages_when_no_pending_calls():
         verdict = MagicMock()
         verdict.verdict = "conclusive"
         verdict.reasoning = "done"
-        verdict.requires_remediation = True
         verdict.why_ruled_out = None
         return verdict
 

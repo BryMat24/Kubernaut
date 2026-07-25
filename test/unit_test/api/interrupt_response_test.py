@@ -6,7 +6,6 @@ def _diagnosis():
     return DiagnosisResult(
         summary="Image pull failure on cache-deployment",
         root_cause="Invalid image tag",
-        requires_remediation=True,
         diagnosis_success=True,
     )
 

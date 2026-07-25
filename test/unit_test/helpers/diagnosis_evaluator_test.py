@@ -14,11 +14,10 @@ def _mock_llm(parsed, raw_content=""):
 
 
 def test_evaluate_returns_parsed_verdict():
-    parsed = EvaluationVerdict(verdict="conclusive", reasoning="pvc missing sc", requires_remediation=True)
+    parsed = EvaluationVerdict(verdict="conclusive", reasoning="pvc missing sc")
     ev = DiagnosisEvaluator(_mock_llm(parsed))
     result = asyncio.run(ev.evaluate("q", "pvc pending", [], 1, 3))
     assert result.verdict == "conclusive"
-    assert result.requires_remediation is True
 
 
 def test_evaluate_falls_back_to_exhausted_on_null_parse():
@@ -34,7 +33,7 @@ def test_evaluate_prompt_gives_confident_vs_unconfident_examples_not_playbook():
     # mechanism (e.g. the hypothesizer picks secret_configmap, but the real cause turns out to be
     # a bad `command:` field) got misgraded as "reformulate" and discarded. The fix judges the
     # response's own evidence quality via few-shot GOOD/BAD examples instead of a playbook.
-    parsed = EvaluationVerdict(verdict="conclusive", reasoning="bad command, not a secret issue", requires_remediation=True)
+    parsed = EvaluationVerdict(verdict="conclusive", reasoning="bad command, not a secret issue")
     llm = _mock_llm(parsed)
     ev = DiagnosisEvaluator(llm)
     asyncio.run(ev.evaluate("q", "missing secret key", [], 1, 3))

@@ -28,7 +28,6 @@ class DiagnosisAgentState(MessagesState):
     hypothesis_count: int
     investigate_iterations: int
     last_verdict: str
-    requires_remediation_hint: bool | None
 
 class PlannerAgentState(MessagesState):
     diagnosis_result: DiagnosisResult  # provided by caller

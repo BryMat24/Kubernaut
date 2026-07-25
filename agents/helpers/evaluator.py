@@ -56,9 +56,7 @@ class DiagnosisEvaluator:
             Decide one verdict:
             - conclusive: the final answer reads like the GOOD example -- a specific mechanism
               backed by specific evidence actually observed via a tool call. This applies whether
-              or not it confirms the hypothesis above. Set requires_remediation true if the cause
-              is fixable via a Kubernetes config/manifest change, false if it's an
-              application-level bug or purely informational.
+              or not it confirms the hypothesis above.
             - reformulate: the final answer reads like the BAD example (hedged, vague, or no
               specific evidence) and the hypothesis appears ruled out -- a different hypothesis is
               worth trying next. Set next_hypothesis and why_ruled_out. Only use this if attempts

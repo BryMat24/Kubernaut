@@ -1,5 +1,5 @@
-from .classifier import Classifier
 from .compaction import HistoryCompactor
+from .diagnosis_summarizer import DiagnosisSummarizer
 from .duplicate_call_filter import find_repeated_calls
 from .evaluator import DiagnosisEvaluator
 from .hypothesizer import Hypothesizer

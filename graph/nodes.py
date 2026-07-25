@@ -23,7 +23,6 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
             "hypothesis_count": 0,
             "investigate_iterations": 0,
             "last_verdict": "",
-            "requires_remediation_hint": None,
         })
         diagnosis_result = result["diagnosis_result"]
         writer({"phase": "diagnosis", "status": "completed", "message": diagnosis_result.summary})
@@ -34,7 +33,7 @@ def make_diagnose_node(diagnosis_agent: DiagnosisAgent):
 
 def require_remediation_routing_node(state: OrchestratorState) -> Literal["planner_agent", "end"]:
     diagnosis_result = state["diagnosis_result"]
-    if not diagnosis_result.diagnosis_success or not diagnosis_result.requires_remediation:
+    if not diagnosis_result.diagnosis_success:
         return "end"
     return "planner_agent"
 
