@@ -2,6 +2,8 @@
 
 An autonomous (human-gated) SRE agent for Kubernetes that answers questions, diagnoses incidents from chat or Prometheus alerts, plans remediations, and ships GitOps fixes as GitHub PRs.
 
+**[▶ Watch the demo](https://drive.google.com/file/d/12njQSwCrfd9MrZtPPLPCbl_F5yPh4wS0/view?usp=sharing)**
+
 ---
 
 ## 1. Functionality
@@ -141,9 +143,9 @@ flowchart TB
 | Layer         | Choice                                                                         |
 | ------------- | ------------------------------------------------------------------------------ |
 | Orchestration | **LangGraph** (supervisor + subgraphs, Postgres checkpointer, HITL interrupts) |
-| Serving       | FastAPI (SSE streaming) + Next.js chat UI                                     |
-| Tools         | **MCP servers**: Kubernetes, Prometheus, Loki (`langchain-mcp-adapters`)      |
-| State/Memory  | Postgres (`AsyncPostgresSaver` + connection pool — checkpointer + chat/audit) |
+| Serving       | FastAPI (SSE streaming) + Next.js chat UI                                      |
+| Tools         | **MCP servers**: Kubernetes, Prometheus, Loki (`langchain-mcp-adapters`)       |
+| State/Memory  | Postgres (`AsyncPostgresSaver` + connection pool — checkpointer + chat/audit)  |
 | Observability | LangSmith + OpenTelemetry                                                      |
 | Delivery      | GitHub PRs → Argo CD (GitOps)                                                  |
 | Packaging     | Helm umbrella chart                                                            |

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DOCKER_USER="brymat24"
-TAG="${IMAGE_TAG:-v8}"
+TAG="${IMAGE_TAG:-v9}"
 
 cd "$REPO_ROOT"
 
