@@ -58,17 +58,6 @@ class PlannerAgent:
             repo_path = create_task_worktree(bare_path, branch)
         return {"bare_path": bare_path, "repo_path": repo_path, "branch": branch}
 
-    def _cleanup_node(self, state: PlannerAgentState) -> dict[str, Any]:
-        try:
-            remove_task_worktree(state["bare_path"], state["repo_path"])
-        except Exception:
-            pass
-        try:
-            run(["git", "branch", "-D", state["branch"]], state["bare_path"])
-        except Exception:
-            pass
-        return {}
-
     def _reasoning_node(self, state: PlannerAgentState) -> dict[str, Any]:
         iteration = state.get("iteration_count", 0) + 1
 
@@ -124,6 +113,17 @@ class PlannerAgent:
 
         parsed = await self.classifier.classify(state["diagnosis_result"], state["messages"])
         return {"plan": parsed}
+
+    def _cleanup_node(self, state: PlannerAgentState) -> dict[str, Any]:
+        try:
+            remove_task_worktree(state["bare_path"], state["repo_path"])
+        except Exception:
+            pass
+        try:
+            run(["git", "branch", "-D", state["branch"]], state["bare_path"])
+        except Exception:
+            pass
+        return {}
 
     def invoke(self, state: PlannerAgentState):
         return self.graph.invoke(state)

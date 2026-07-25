@@ -10,6 +10,8 @@ from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +34,18 @@ CHECKPOINT_SERDE = JsonPlusSerializer(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_models()
-    async with AsyncPostgresSaver.from_conn_string(DATABASE_URL, serde=CHECKPOINT_SERDE) as checkpointer:
+    # A single AsyncConnection (the old `AsyncPostgresSaver.from_conn_string(...)` path) is
+    # held open for the whole process lifetime with no reconnect logic -- if the remote
+    # Postgres (or anything in front of it, e.g. a pooler/load balancer) closes it during an
+    # idle gap between requests, every subsequent checkpoint operation fails with
+    # `psycopg.OperationalError: the connection is closed`. A pool checks out a fresh,
+    # health-checked connection per operation and transparently reconnects.
+    async with AsyncConnectionPool(
+        conninfo=DATABASE_URL,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        open=False,
+    ) as pool:
+        checkpointer = AsyncPostgresSaver(conn=pool, serde=CHECKPOINT_SERDE)
         await checkpointer.setup()
         app.state.graph = await build_graph(checkpointer=checkpointer)
         yield
